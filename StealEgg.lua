@@ -1,7 +1,7 @@
 --=============================================================
---  STEAL AN EGG — LUXXY  v3.0.1
---  Body-Velocity Movement • Anti-Boss 4-lapis • Anti-Blink
---  Best Egg semua biome • Biome filter untuk Steal Egg
+--  STEAL AN EGG — LUXXY  v3.0.2
+--  Boss Detection v2 (behavior+structure) • Anti-Boss 4-lapis
+--  Best Egg semua biome • Biome filter • BodyVelocity movement
 --=============================================================
 
 if _G.LuxxyCleanup then pcall(_G.LuxxyCleanup) end
@@ -71,7 +71,7 @@ end
 
 local CONFIG = {
     Title = "STEAL AN EGG — LUXXY",
-    Version = "3.0.1",
+    Version = "3.0.2",
     SaveFile = "LuxxyConfig.json",
     Thumbnail = "rbxassetid://134782047288874",
     Colors = {
@@ -101,6 +101,8 @@ local CONFIG = {
     BossHopRange = 12,
     BossHopStep = 3.0,
     BossHopDuration = 0.15,
+    BossMinSize = 5,        -- minimum stud ukuran boss
+    BossMinWalkSpeed = 3,   -- minimum WalkSpeed agar dianggap bergerak
     EggRetryMax = 3,
     EggScanInterval = 0.5,
     BiomeScanInterval = 8,
@@ -342,7 +344,7 @@ new("TextLabel", {
     Parent = Header, Size = UDim2.new(1, -100, 0, 18),
     Position = UDim2.new(0, 82, 0, 42),
     BackgroundTransparency = 1,
-    Text = "v"..CONFIG.Version.."  •  anti-boss v4",
+    Text = "v"..CONFIG.Version.."  •  boss-detect v2",
     TextColor3 = CONFIG.Colors.SoftWhite, Font = Enum.Font.Gotham,
     TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
 })
@@ -648,7 +650,7 @@ SelAllBiome.MouseButton1Click:Connect(function()
     saveConfig()
 end)
 
-section(MainPage, "BEST + ESP", nextOrder())
+section(MainPage, "BEST + ESP + DEBUG", nextOrder())
 
 makeToggle(MainPage, "👑  STEAL BEST EGG (semua biome)", State.StealBestEgg, function(v)
     State.StealBestEgg = v
@@ -660,25 +662,30 @@ makeToggle(MainPage, "🔍  ESP EGGS", State.ESP, function(v)
     if not v and clearAllESP then clearAllESP() end
 end, nextOrder())
 
+-- Debug button akan di-add setelah boss detection function didefinisikan
+
 local InfoLabel = new("TextLabel", {
-    Parent = InfoPage, Size = UDim2.new(1, -12, 0, 540),
+    Parent = InfoPage, Size = UDim2.new(1, -12, 0, 560),
     Position = UDim2.new(0, 6, 0, 0),
     BackgroundColor3 = CONFIG.Colors.Darker, BackgroundTransparency = 0.3,
     Text = "🌿 STEAL AN EGG — LUXXY\nVersion : "..CONFIG.Version..
-        "\n\nMOVEMENT:\n"..
-        "• BodyVelocity + Velocity lerp (anti-blink)\n"..
-        "• Speed limit: "..CONFIG.MaxSpeed.." stud/s\n"..
-        "• Network ownership di-claim → server tidak override\n\n"..
+        "\n\nBOSS DETECTION v2:\n"..
+        "• Behavior-based (bukan nama saja)\n"..
+        "• Humanoid + HRP + WalkSpeed > 3\n"..
+        "• Size > 5 stud\n"..
+        "• Skip pet (Owner attribute / nama)\n"..
+        "• Keyword creature (gorilla, tiger, dll)\n\n"..
         "ANTI-BOSS 4-LAPIS:\n"..
-        "1. Speed escalation\n"..
+        "1. Speed escalation (dekat boss = cepat)\n"..
         "2. Perpendicular dodge\n"..
         "3. Wall seek (boss pathfinding stuck)\n"..
-        "4. Micro Y-hop\n\n"..
-        "DEBUG: Cek F9 untuk log.\n"..
-        "Kalau footer stuck di '⏳ Memulai...':\n"..
-        "• Cek F9 apakah ada error\n"..
-        "• Coba toggle ESP → kalau egg muncul,\n"..
-        "  berarti deteksi OK, masalah di movement\n\n— Luxxy 🌿",
+        "4. Micro Y-hop (naik 3 stud/frame)\n\n"..
+        "DEBUG:\n"..
+        "Klik 👾 SCAN BOSS → cek F9 untuk daftar\n"..
+        "semua model yang punya Humanoid.\n"..
+        "Kirim hasilnya kalau boss masih lolos.\n\n"..
+        "MOVEMENT:\n"..
+        "BodyVelocity + Velocity lerp, max "..CONFIG.MaxSpeed.." stud/s\n\n— Luxxy 🌿",
     TextColor3 = CONFIG.Colors.SoftWhite, Font = Enum.Font.Gotham,
     TextSize = 12, TextWrapped = true,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
@@ -778,7 +785,7 @@ end)
 table.insert(Cleanup, function() cVp:Disconnect() end)
 
 --=============================================================
---  BIOME SYSTEM (async + throttled)
+--  BIOME SYSTEM
 --=============================================================
 local biomeRegions = {}
 local biomeRefreshBusy = false
@@ -1203,36 +1210,76 @@ task.spawn(function()
 end)
 
 --=============================================================
---  BOSS DETECTION
+--  BOSS DETECTION v2 (behavior + structure)
 --=============================================================
 local BOSS_KEYWORDS = {
     "boss", "guard", "chaser", "monster", "police", "cop",
     "enemy", "pursuer", "hunter", "evil", "demon", "grinch",
     "thief", "captor", "secur", "warden",
+    -- Creature keywords (dari screenshot)
+    "gorilla", "gorila", "tiger", "harimau", "chicken", "ayam",
+    "scorpion", "kalajengking", "trex", "t-rex", "rex", "yeti",
+    "whale", "beluga", "paus", "crab", "kepiting", "dragon",
+    "naga", "knight", "king", "giant", "beast", "creature",
+    "mammoth", "shark", "hiu", "spider", "laba", "wolf",
+    "serigala", "bear", "beruang", "snake", "ular", "ape",
+    "chimp", "turtle", "kura", "squid", "octopus", "gurita",
+    "rhino", "badak", "elephant", "gajah", "lion", "singa",
+    "leopard", "macan", "panther", "boar", "babi",
 }
+
+local BOSS_PET_BLACKLIST = {
+    "pet", "companion", "follower", "buddy", "mini",
+    "baby", "cute", "hat", "accessory",
+}
+
+local function containsAnyStr(str, list)
+    str = string.lower(str or "")
+    for _, kw in ipairs(list) do
+        if string.find(str, kw, 1, true) then return true end
+    end
+    return false
+end
+
+local function getModelSize(model)
+    if not model:IsA("Model") then return 0 end
+    local ok, cf, size = pcall(function() return model:GetBoundingBox() end)
+    if not ok then return 0 end
+    return math.max(size.X, size.Y, size.Z)
+end
 
 local function isBossModel(model)
     if not model:IsA("Model") then return false end
     if Players:GetPlayerFromCharacter(model) then return false end
-    local owner = model:GetAttribute("Owner") or model:GetAttribute("Player")
-        or model:GetAttribute("OwnerId") or model:GetAttribute("UserId")
+
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+
+    local hrp = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
+    if not hrp then return false end
+
+    -- Skip pet (attribute owner)
+    local owner = model:GetAttribute("Owner")
+        or model:GetAttribute("Player")
+        or model:GetAttribute("OwnerId")
+        or model:GetAttribute("UserId")
+        or model:GetAttribute("OwnerName")
     if owner then return false end
-    local nameLower = string.lower(model.Name)
-    for _, kw in ipairs(BOSS_KEYWORDS) do
-        if string.find(nameLower, kw, 1, true) then return true end
-    end
-    local p = model.Parent
-    local depth = 0
-    while p and p ~= Workspace and depth < 3 do
-        local pl = string.lower(p.Name)
-        for _, kw in ipairs(BOSS_KEYWORDS) do
-            if string.find(pl, kw, 1, true) then return true end
-        end
-        p = p.Parent; depth = depth + 1
-    end
-    if model:GetAttribute("IsBoss") or model:GetAttribute("Boss") or model:GetAttribute("Enemy") then
-        return true
-    end
+
+    if containsAnyStr(model.Name, BOSS_PET_BLACKLIST) then return false end
+
+    local isMoving = hum.WalkSpeed >= CONFIG.BossMinWalkSpeed
+    local hasKeyword = containsAnyStr(model.Name, BOSS_KEYWORDS)
+    local hasBossAttr = model:GetAttribute("IsBoss")
+        or model:GetAttribute("Boss")
+        or model:GetAttribute("Enemy")
+
+    local size = getModelSize(model)
+    local isBig = size >= CONFIG.BossMinSize
+
+    if hasKeyword or hasBossAttr then return true end
+    if isBig and isMoving then return true end
+
     return false
 end
 
@@ -1243,18 +1290,28 @@ local function findNearestBoss(maxRange)
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil, math.huge, nil end
     local myPos = hrp.Position
+
     local nearest, nearestDist, nearestPos = nil, maxRange, nil
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if isBossModel(obj) then
-            local hum = obj:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                local ehrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
-                if ehrp then
-                    local d = (ehrp.Position - myPos).Magnitude
-                    if d < nearestDist then
-                        nearest = obj
-                        nearestDist = d
-                        nearestPos = ehrp.Position
+
+    -- Folder spesifik dulu (lebih cepat), fallback ke seluruh Workspace
+    local searchRoots = { Workspace }
+    for _, name in ipairs({"Monsters", "Bosses", "Enemies", "NPCs", "Mobs", "Chase", "Creatures"}) do
+        local folder = Workspace:FindFirstChild(name)
+        if folder then table.insert(searchRoots, folder) end
+    end
+
+    for _, root in ipairs(searchRoots) do
+        for _, obj in ipairs(root:GetChildren()) do
+            if obj:IsA("Model") then
+                if isBossModel(obj) then
+                    local ehrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+                    if ehrp then
+                        local d = (ehrp.Position - myPos).Magnitude
+                        if d < nearestDist then
+                            nearest = obj
+                            nearestDist = d
+                            nearestPos = ehrp.Position
+                        end
                     end
                 end
             end
@@ -1262,6 +1319,54 @@ local function findNearestBoss(maxRange)
     end
     return nearest, nearestDist, nearestPos
 end
+
+--=============================================================
+--  BOSS DEBUG BUTTON (dipasang setelah findNearestBoss ada)
+--=============================================================
+local BossDebugBtn = new("TextButton", {
+    Parent = MainPage, Size = UDim2.new(1, 0, 0, 34),
+    BackgroundColor3 = CONFIG.Colors.Dark,
+    Text = "👾  SCAN BOSS (print ke F9)",
+    TextColor3 = CONFIG.Colors.SoftWhite,
+    Font = Enum.Font.GothamBold, TextSize = 13,
+    AutoButtonColor = false, BorderSizePixel = 0,
+    LayoutOrder = nextOrder(),
+})
+new("UICorner", {CornerRadius = UDim.new(0, 8), Parent = BossDebugBtn})
+new("UIStroke", {Color = CONFIG.Colors.Border, Thickness = 1, Parent = BossDebugBtn})
+
+BossDebugBtn.MouseButton1Click:Connect(function()
+    playClick()
+    print("========== BOSS SCAN ==========")
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local myPos = hrp and hrp.Position
+
+    local count = 0
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model") then
+            local hum = obj:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                if not Players:GetPlayerFromCharacter(obj) then
+                    count = count + 1
+                    local ehrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+                    local size = getModelSize(obj)
+                    local dist = (myPos and ehrp) and (myPos - ehrp.Position).Magnitude or -1
+                    local owner = obj:GetAttribute("Owner") or obj:GetAttribute("Player")
+                        or obj:GetAttribute("OwnerId") or obj:GetAttribute("UserId")
+                    print(string.format(
+                        "[%d] %s | HP:%d WS:%.1f Size:%.1f Dist:%.0f Owner:%s isBoss:%s",
+                        count, obj:GetFullName(), hum.Health, hum.WalkSpeed, size, dist,
+                        tostring(owner), tostring(isBossModel(obj))
+                    ))
+                end
+            end
+        end
+    end
+    print("Total non-player models with Humanoid:", count)
+    print("================================")
+    notify("LUXXY", "Boss scan selesai • cek F9")
+end)
 
 --=============================================================
 --  OBSTACLE AVOID
@@ -1443,7 +1548,6 @@ local function microStepMoveTo(targetPos, baseSpeed)
             hum.WalkSpeed = CONFIG.FakeWalkSpeed
         end
 
-        -- Boss check
         if tick() - lastBossCheck > CONFIG.BossCheckInterval then
             lastBossCheck = tick()
             boss, bdist, bpos = findNearestBoss(CONFIG.BossDetectRange)
@@ -1472,10 +1576,10 @@ local function microStepMoveTo(targetPos, baseSpeed)
         if dist < 4 then break end
         local dir = toTarget.Unit
 
-        -- Wall seek (boss jauh dari target)
+        -- Wall seek
         if boss and bdist < CONFIG.BossWallSeekRange and tick() - lastWallSeek > 2 then
             lastWallSeek = tick()
-            local wall, wallDist = findNearbyWall(hrp.Position, CONFIG.BossWallSeekRadius)
+            local wall = findNearbyWall(hrp.Position, CONFIG.BossWallSeekRadius)
             if wall then
                 wallTarget = wall.Position
                 wallTargetUntil = tick() + 1.5
@@ -1502,7 +1606,6 @@ local function microStepMoveTo(targetPos, baseSpeed)
             end
         end
 
-        -- Obstacle avoid
         local lookAhead = math.max(CONFIG.LookAhead, currentSpeed * 0.12)
         local steerDir = computeSteerDirection(hrp, char, dir, lookAhead)
         dir = steerDir
@@ -1584,7 +1687,7 @@ local function eggScore(egg)
 end
 
 --=============================================================
---  MAIN STEAL LOOP (throttled + debug)
+--  MAIN STEAL LOOP
 --=============================================================
 task.spawn(function()
     print("[LUXXY] Main loop started")
@@ -1595,13 +1698,11 @@ task.spawn(function()
     while _G.LuxxyRunning do
         RunService.Heartbeat:Wait()
         if State.StealEgg or State.StealBestEgg then
-            -- Biome refresh async
             if tick() - lastBiomeRefresh > CONFIG.BiomeScanInterval then
                 refreshBiomeRegions()
                 lastBiomeRefresh = tick()
             end
 
-            -- Egg scan throttled
             if tick() - lastEggRefresh > CONFIG.EggScanInterval then
                 lastEggRefresh = tick()
                 local ok, result = pcall(findEggs)
@@ -1711,4 +1812,4 @@ end)
 
 selectTab("MAIN")
 notify("LUXXY", "v"..CONFIG.Version.." loaded 🌿")
-print("[LUXXY] Loaded • v"..CONFIG.Version.." • anti-boss v4 ready")
+print("[LUXXY] Loaded • v"..CONFIG.Version.." • boss-detect v2 ready")
