@@ -1,6 +1,6 @@
 --=============================================================
---  STEAL AN EGG — LUXXY  v3.1.0
---  Anti-blink (speed cap + ownership reclaim) • Vertical escape
+--  STEAL AN EGG — LUXXY  v3.1.1
+--  Fix: getMyBase nil error • Anti-blink • Vertical escape
 --=============================================================
 
 if _G.LuxxyCleanup then pcall(_G.LuxxyCleanup) end
@@ -69,7 +69,7 @@ end
 
 local CONFIG = {
     Title = "STEAL AN EGG — LUXXY",
-    Version = "3.1.0",
+    Version = "3.1.1",
     SaveFile = "LuxxyConfig.json",
     Thumbnail = "rbxassetid://134782047288874",
     Colors = {
@@ -83,21 +83,17 @@ local CONFIG = {
         Danger      = Color3.fromRGB(255, 70, 70),
     },
     MoveSpeed = 60,
-    MaxSafeSpeed = 120,            -- batas aman anti-blink
+    MaxSafeSpeed = 120,
     HoverDist = 3,
     FakeWalkSpeed = 16,
-    VelLerp = 0.2,                 -- smoothing lebih halus
-    MoveToInterval = 8,            -- jarang panggil MoveTo
+    VelLerp = 0.2,
+    MoveToInterval = 8,
     LookAhead = 12,
     AvoidStrength = 2.0,
-    -- Network ownership
-    NetworkReclaimInterval = 0.3,  -- reclaim tiap 0.3 detik
-    MinOwnerReclaimDiff = 200,     -- reclaim kalau GetNetworkOwner ≠ LocalPlayer
-    -- Biome
+    NetworkReclaimInterval = 0.3,
     MinBiomeVolume = 40000,
     BiomeYPad = 80,
     PlayerBiomeRange = 350,
-    -- Boss
     BossDetectRange = 220,
     BossWarnRange   = 80,
     BossClimbRange  = 45,
@@ -105,11 +101,10 @@ local CONFIG = {
     BossBaseRushMult = 1.25,
     BossClimbMult    = 1.35,
     BossPanicMult    = 1.45,
-    BossPanicAltitude = 35,        -- turun dari 60
-    BossClimbAltitude = 25,        -- turun dari 40
+    BossPanicAltitude = 35,
+    BossClimbAltitude = 25,
     EscapeHoldTime = 5,
     BossCheckInterval = 0.1,
-    -- Egg retry
     EggRetryMax = 3,
 }
 
@@ -173,7 +168,6 @@ local function loadConfig()
 end
 loadConfig()
 
--- clamp speed yang tersimpan
 State.MoveSpeed = math.min(State.MoveSpeed, CONFIG.MaxSafeSpeed)
 
 local function new(class, props, children)
@@ -657,21 +651,15 @@ local InfoLabel = new("TextLabel", {
     Position = UDim2.new(0, 6, 0, 0),
     BackgroundColor3 = CONFIG.Colors.Darker, BackgroundTransparency = 0.3,
     Text = "🌿 STEAL AN EGG — LUXXY\nVersion : "..CONFIG.Version..
-        "\n\nANTI-BLINK v3.1:\n"..
-        "  • Speed cap di "..CONFIG.MaxSafeSpeed.." stud/s\n"..
-        "  • Network ownership reclaim tiap "..CONFIG.NetworkReclaimInterval.."s\n"..
-        "  • Velocity smoothing (lerp "..CONFIG.VelLerp..")\n"..
-        "  • MoveTo jarang (tiap "..CONFIG.MoveToInterval.." frame)\n"..
-        "  • Boss escape speed max 1.45×\n\n"..
+        "\n\nFIX v3.1.1:\n"..
+        "  • getMyBase dipindah ke atas (fix crash)\n"..
+        "  • Anti-blink: speed cap "..CONFIG.MaxSafeSpeed.."\n"..
+        "  • Network ownership reclaim\n"..
+        "  • Biome filter fail-open\n\n"..
         "ANTI-BOSS:\n"..
         "  • Waspada (≤"..CONFIG.BossWarnRange.."): rush base\n"..
-        "  • Climb (≤"..CONFIG.BossClimbRange.."): naik diagonal → "..CONFIG.BossClimbAltitude.." stud\n"..
-        "  • Panic (≤"..CONFIG.BossPanicRange.."): naik lurus → "..CONFIG.BossPanicAltitude.." stud\n"..
-        "  • Hold escape "..CONFIG.EscapeHoldTime.."s setelah boss hilang\n\n"..
-        "FITUR:\n"..
-        "  • Best Egg cari SEMUA biome\n"..
-        "  • Egg jatuh → retry max "..CONFIG.EggRetryMax.."×\n"..
-        "  • Toggle OFF → instant stop\n\n"..
+        "  • Climb (≤"..CONFIG.BossClimbRange.."): naik diagonal\n"..
+        "  • Panic (≤"..CONFIG.BossPanicRange.."): naik lurus\n\n"..
         "Biome: "..table.concat(BIOMES, ", ").."\n\n— Luxxy 🌿",
     TextColor3 = CONFIG.Colors.SoftWhite, Font = Enum.Font.Gotham,
     TextSize = 12, TextWrapped = true,
@@ -874,9 +862,11 @@ local function getEggBiome(egg, pos)
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if hrp and pos then
         if (hrp.Position - pos).Magnitude <= CONFIG.PlayerBiomeRange then
-            return getPlayerBiome()
+            local pb = getPlayerBiome()
+            if pb then return pb end
         end
     end
+    if #biomeRegions == 1 then return biomeRegions[1].name end
     return nil
 end
 
@@ -1020,8 +1010,13 @@ end
 
 local function isSelectedBiome(egg, pos)
     if not hasAnyBiomeSelected() then return true end
+    if #biomeRegions == 0 then return true end
     local biome = getEggBiome(egg, pos)
-    if not biome then return false end
+    if not biome then
+        local pb = getPlayerBiome()
+        if pb then return State.SelectedBiomes[pb] == true end
+        return true
+    end
     return State.SelectedBiomes[biome] == true
 end
 
@@ -1316,6 +1311,23 @@ local function computeSteerDirection(hrp, char, dirUnit, lookAhead)
 end
 
 --=============================================================
+--  MY BASE FINDER — dipindah ke atas spoofMoveTo (FIX v3.1.1)
+--=============================================================
+local function getMyBase()
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model") or obj:IsA("BasePart") then
+            local owner = obj:GetAttribute("Owner") or obj:GetAttribute("Player")
+            if owner == LocalPlayer.Name or owner == LocalPlayer.UserId then
+                local pos = obj:IsA("Model") and (obj.PrimaryPart and obj.PrimaryPart.Position) or obj.Position
+                if pos then return pos end
+            end
+        end
+    end
+    local sp = Workspace:FindFirstChildOfClass("SpawnLocation")
+    return sp and sp.Position or Vector3.new(0, 20, 0)
+end
+
+--=============================================================
 --  WALK-SPOOF v8 — ANTI-BLINK
 --=============================================================
 local spoofState = { vel = nil, gyro = nil, active = false }
@@ -1377,7 +1389,6 @@ local function spoofMoveTo(targetPos, speed)
 
     spoofState.vel, spoofState.gyro, spoofState.active = vel, gyro, true
 
-    -- Speed di-clamp ke batas aman
     local baseSpeed = math.clamp(speed or State.MoveSpeed, 16, CONFIG.MaxSafeSpeed)
     local currentSpeed = baseSpeed
     local targetSpeed = baseSpeed
@@ -1411,7 +1422,6 @@ local function spoofMoveTo(targetPos, speed)
             hum.WalkSpeed = CONFIG.FakeWalkSpeed
         end
 
-        -- === NETWORK OWNERSHIP RECLAIM (anti-blink utama) ===
         if tick() - lastNetReclaim > CONFIG.NetworkReclaimInterval then
             lastNetReclaim = tick()
             pcall(function()
@@ -1422,7 +1432,6 @@ local function spoofMoveTo(targetPos, speed)
             end)
         end
 
-        -- === BOSS CHECK ===
         if tick() - lastBossCheck > CONFIG.BossCheckInterval then
             lastBossCheck = tick()
             local boss, bossPos, bossDist = findNearestBoss(CONFIG.BossDetectRange)
@@ -1460,7 +1469,6 @@ local function spoofMoveTo(targetPos, speed)
             end
         end
 
-        -- === TARGET & SPEED ===
         local dirUnit
         local localTarget
 
@@ -1580,20 +1588,6 @@ local function spoofMoveTo(targetPos, speed)
     if hum.Parent then hum.WalkSpeed = origSpeed end
 end
 
-local function getMyBase()
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("Model") or obj:IsA("BasePart") then
-            local owner = obj:GetAttribute("Owner") or obj:GetAttribute("Player")
-            if owner == LocalPlayer.Name or owner == LocalPlayer.UserId then
-                local pos = obj:IsA("Model") and (obj.PrimaryPart and obj.PrimaryPart.Position) or obj.Position
-                if pos then return pos end
-            end
-        end
-    end
-    local sp = Workspace:FindFirstChildOfClass("SpawnLocation")
-    return sp and sp.Position or Vector3.new(0, 20, 0)
-end
-
 local function tryGrabEgg(egg)
     local prompt = findStealPrompt(egg)
     if prompt then
@@ -1699,13 +1693,18 @@ task.spawn(function()
                     task.wait(0.5)
                 end
             else
+                local regionSet = {}
+                for _, r in ipairs(biomeRegions) do regionSet[r.name] = true end
+                local regionCount = 0
+                for _ in pairs(regionSet) do regionCount = regionCount + 1 end
+
                 local biomeList = {}
                 for b, v in pairs(State.SelectedBiomes) do if v then table.insert(biomeList, b) end end
                 local biomeStr = #biomeList > 0 and (" ["..table.concat(biomeList, ",").."]") or ""
                 if State.StealBestEgg then
-                    Footer.Text = "Cari best egg SEMUA biome ("..#eggs.." egg)"
+                    Footer.Text = "Cari best egg SEMUA biome ("..#eggs.." egg, "..regionCount.." region)"
                 else
-                    Footer.Text = "Cari egg"..biomeStr.." ("..#eggs.." egg)"
+                    Footer.Text = "Cari egg"..biomeStr.." — "..#eggs.." egg, "..regionCount.." region"
                 end
                 task.wait(0.5)
             end
