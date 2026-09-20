@@ -1,9 +1,3 @@
---=============================================================
---  STEAL AN EGG — LUXXY
---  Luxury Green/White UI  •  Matrix Background  •  Mobile & PC
---  Author: (your name)
---  Version: 1.0.0
---=============================================================
 
 --// SERVICES
 local Players           = game:GetService("Players")
