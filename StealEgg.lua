@@ -1,7 +1,7 @@
 --=============================================================
---  STEAL AN EGG — LUXXY  v3.0.3
---  Boss Detect v3 (behavior + owner-aware)
---  Anti-Boss 4-lapis • Best Egg semua biome • Biome filter
+--  STEAL AN EGG — LUXXY  v3.0.5
+--  Hitbox-Aware Anti-Boss (perpendicular escape + critical hop)
+--  Boss ESP • Escape Mode • Biome Filter • Best Egg semua biome
 --=============================================================
 
 if _G.LuxxyCleanup then pcall(_G.LuxxyCleanup) end
@@ -24,7 +24,6 @@ local Workspace         = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local Camera      = Workspace.CurrentCamera
 
--- cleanup sisa instance lama
 for _, obj in ipairs((function()
     local list = {}
     pcall(function()
@@ -71,7 +70,7 @@ end
 
 local CONFIG = {
     Title = "STEAL AN EGG — LUXXY",
-    Version = "3.0.3",
+    Version = "3.0.5",
     SaveFile = "LuxxyConfig.json",
     Thumbnail = "rbxassetid://134782047288874",
     Colors = {
@@ -84,7 +83,7 @@ local CONFIG = {
         Border      = Color3.fromRGB(120, 220, 150),
     },
     MoveSpeed = 120,
-    MaxSpeed  = 240,
+    MaxSpeed  = 260,
     HoverDist = 3,
     FakeWalkSpeed = 16,
     LookAhead = 12,
@@ -92,17 +91,24 @@ local CONFIG = {
     MinBiomeVolume = 40000,
     BiomeYPad = 80,
     PlayerBiomeRange = 350,
-    BossDetectRange = 200,
-    BossSpeedBoost = 1.0,
-    BossCheckInterval = 0.15,
-    BossDodgeRange = 30,
+    -- Boss detection
+    BossDetectRange = 250,
+    BossSpeedBoost = 1.5,
+    BossCheckInterval = 0.1,
+    BossDodgeRange = 35,
     BossWallSeekRange = 25,
     BossWallSeekRadius = 60,
-    BossHopRange = 12,
-    BossHopStep = 3.0,
-    BossHopDuration = 0.15,
+    BossHopRange = 18,
+    BossHopStep = 4.0,
+    BossHopDuration = 0.2,
     BossMinSize = 4,
     BossMinWalkSpeed = 3,
+    -- Hitbox awareness
+    BossSafeMargin = 12,
+    BossCriticalMargin = 5,
+    BossCriticalHopSpeed = 75,
+    BossCriticalHopDur = 0.35,
+    -- Egg
     EggRetryMax = 3,
     EggScanInterval = 0.5,
     BiomeScanInterval = 8,
@@ -152,7 +158,7 @@ local EGG_DATA = {
 }
 
 local State = {
-    StealEgg = false, StealBestEgg = false, ESP = false,
+    StealEgg = false, StealBestEgg = false, ESP = false, BossESP = false,
     MoveSpeed = CONFIG.MoveSpeed,
     SelectedBiomes = {},
 }
@@ -162,7 +168,8 @@ local function saveConfig()
         if writefile then
             writefile(CONFIG.SaveFile, HttpService:JSONEncode({
                 StealEgg = State.StealEgg, StealBestEgg = State.StealBestEgg,
-                ESP = State.ESP, MoveSpeed = State.MoveSpeed,
+                ESP = State.ESP, BossESP = State.BossESP,
+                MoveSpeed = State.MoveSpeed,
                 SelectedBiomes = State.SelectedBiomes,
             }))
         end
@@ -179,6 +186,7 @@ local function loadConfig()
         State.StealEgg       = res.StealEgg or false
         State.StealBestEgg   = res.StealBestEgg or false
         State.ESP            = res.ESP or false
+        State.BossESP        = res.BossESP or false
         State.MoveSpeed      = res.MoveSpeed or CONFIG.MoveSpeed
         State.SelectedBiomes = res.SelectedBiomes or {}
     end
@@ -344,7 +352,7 @@ new("TextLabel", {
     Parent = Header, Size = UDim2.new(1, -100, 0, 18),
     Position = UDim2.new(0, 82, 0, 42),
     BackgroundTransparency = 1,
-    Text = "v"..CONFIG.Version.."  •  boss-detect v3",
+    Text = "v"..CONFIG.Version.."  •  hitbox-aware",
     TextColor3 = CONFIG.Colors.SoftWhite, Font = Enum.Font.Gotham,
     TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
 })
@@ -558,7 +566,7 @@ makeToggle(MainPage, "🥚  STEAL EGG (biome filter)", State.StealEgg, function(
     print("[LUXXY] StealEgg toggle =", v)
 end, nextOrder())
 
-makeSlider(MainPage, "🏃 Base Speed (stud/s)", 40, 240, State.MoveSpeed, function(v)
+makeSlider(MainPage, "🏃 Base Speed (stud/s)", 40, 260, State.MoveSpeed, function(v)
     State.MoveSpeed = v
 end, nextOrder())
 
@@ -650,7 +658,7 @@ SelAllBiome.MouseButton1Click:Connect(function()
     saveConfig()
 end)
 
-section(MainPage, "BEST + ESP + DEBUG", nextOrder())
+section(MainPage, "BEST + ESP", nextOrder())
 
 makeToggle(MainPage, "👑  STEAL BEST EGG (semua biome)", State.StealBestEgg, function(v)
     State.StealBestEgg = v
@@ -662,26 +670,36 @@ makeToggle(MainPage, "🔍  ESP EGGS", State.ESP, function(v)
     if not v and clearAllESP then clearAllESP() end
 end, nextOrder())
 
+makeToggle(MainPage, "👾  ESP BOSS (outline + jarak)", State.BossESP, function(v)
+    State.BossESP = v
+    if not v and clearBossESP then clearBossESP() end
+end, nextOrder())
+
 local InfoLabel = new("TextLabel", {
-    Parent = InfoPage, Size = UDim2.new(1, -12, 0, 560),
+    Parent = InfoPage, Size = UDim2.new(1, -12, 0, 600),
     Position = UDim2.new(0, 6, 0, 0),
     BackgroundColor3 = CONFIG.Colors.Darker, BackgroundTransparency = 0.3,
     Text = "🌿 STEAL AN EGG — LUXXY\nVersion : "..CONFIG.Version..
-        "\n\nBOSS DETECTION v3:\n"..
-        "• WAJIB WalkSpeed >= "..CONFIG.BossMinWalkSpeed.."\n"..
-        "  (guard diam otomatis di-skip)\n"..
-        "• Owner check ulang:\n"..
-        "  - Skip kalau owner = LocalPlayer (pet sendiri)\n"..
-        "  - Owner UserId lain = NPC boss event\n"..
-        "• Keyword creature (gorilla, tiger, dll)\n"..
-        "• Search folder: Monsters/Bosses/Enemies\n"..
-        "  + DrScrambleEvent & area lain\n\n"..
-        "ANTI-BOSS 4-LAPIS:\n"..
-        "1. Speed escalation\n"..
-        "2. Perpendicular dodge\n"..
-        "3. Wall seek\n"..
-        "4. Micro Y-hop\n\n"..
-        "Cek F9 kalau boss masih lolos.\n\n— Luxxy 🌿",
+        "\n\nHITBOX-AWARE ANTI-BOSS:\n"..
+        "• Radius boss dihitung dari bounding box\n"..
+        "• Escape range = radius + margin (auto)\n"..
+        "• Normal: kabur menjauh dari boss\n"..
+        "• CRITICAL (boss sangat dekat):\n"..
+        "  - Kabur PERPENDIKULAR (keluar samping)\n"..
+        "  - Hop tinggi (naik 75 stud/s)\n"..
+        "• Footer tunjukkan radius boss (R:XX)\n\n"..
+        "BOSS ESP:\n"..
+        "• Outline merah + label jarak real-time\n"..
+        "• Warna berubah: merah<30, kuning<80\n\n"..
+        "TUNING (CONFIG):\n"..
+        "• BossSafeMargin = "..CONFIG.BossSafeMargin.."\n"..
+        "• BossCriticalMargin = "..CONFIG.BossCriticalMargin.."\n"..
+        "• BossCriticalHopSpeed = "..CONFIG.BossCriticalHopSpeed.."\n"..
+        "• BossCriticalHopDur = "..CONFIG.BossCriticalHopDur.."\n\n"..
+        "Kalau boss besar masih catch:\n"..
+        "• Naikkan BossSafeMargin ke 20\n"..
+        "• Naikkan BossCriticalHopSpeed ke 100\n"..
+        "• Naikkan BossCriticalHopDur ke 0.5\n\n— Luxxy 🌿",
     TextColor3 = CONFIG.Colors.SoftWhite, Font = Enum.Font.Gotham,
     TextSize = 12, TextWrapped = true,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
@@ -1066,7 +1084,7 @@ local function isSelectedBiome(egg, pos)
 end
 
 --=============================================================
---  ESP
+--  ESP EGGS
 --=============================================================
 local espCache = {}
 
@@ -1206,13 +1224,12 @@ task.spawn(function()
 end)
 
 --=============================================================
---  BOSS DETECTION v3 (owner-aware + WalkSpeed required)
+--  BOSS DETECTION v3
 --=============================================================
 local BOSS_KEYWORDS = {
     "boss", "guard", "chaser", "monster", "police", "cop",
     "enemy", "pursuer", "hunter", "evil", "demon", "grinch",
     "thief", "captor", "secur", "warden",
-    -- Creature keywords
     "gorilla", "gorila", "tiger", "harimau", "chicken", "ayam",
     "scorpion", "kalajengking", "trex", "t-rex", "rex", "yeti",
     "whale", "beluga", "paus", "crab", "kepiting", "dragon",
@@ -1245,7 +1262,13 @@ local function getModelSize(model)
     return math.max(size.X, size.Y, size.Z)
 end
 
--- Cek apakah owner = LocalPlayer (pet sendiri)
+local function getModelRadius(model)
+    if not model:IsA("Model") then return 5 end
+    local ok, cf, size = pcall(function() return model:GetBoundingBox() end)
+    if not ok then return 5 end
+    return math.max(size.X, size.Z) / 2
+end
+
 local function isOwnedByLocalPlayer(ownerValue)
     if not ownerValue then return false end
     if ownerValue == LocalPlayer.Name then return true end
@@ -1264,7 +1287,6 @@ local function isBossModel(model)
     local hrp = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
     if not hrp then return false end
 
-    -- FIX: Cek owner — hanya skip kalau owner = LocalPlayer (pet sendiri)
     local owner = model:GetAttribute("Owner")
         or model:GetAttribute("Player")
         or model:GetAttribute("OwnerId")
@@ -1272,29 +1294,22 @@ local function isBossModel(model)
         or model:GetAttribute("OwnerName")
     if isOwnedByLocalPlayer(owner) then return false end
 
-    -- Skip pet by name
     if containsAnyStr(model.Name, BOSS_PET_BLACKLIST) then return false end
 
-    -- FIX UTAMA: WAJIB WalkSpeed >= threshold (guard diam otomatis di-skip)
     local hasBossAttr = model:GetAttribute("IsBoss")
         or model:GetAttribute("Boss")
         or model:GetAttribute("Enemy")
         or model:GetAttribute("Chase")
     local isMoving = hum.WalkSpeed >= CONFIG.BossMinWalkSpeed
 
-    if not isMoving and not hasBossAttr then
-        return false  -- Guard diam tanpa attribute → skip
-    end
+    if not isMoving and not hasBossAttr then return false end
 
     local hasKeyword = containsAnyStr(model.Name, BOSS_KEYWORDS)
     local size = getModelSize(model)
     local isBig = size >= CONFIG.BossMinSize
 
-    -- Prioritas 1: attribute eksplisit
     if hasBossAttr then return true end
-    -- Prioritas 2: bergerak + keyword
     if isMoving and hasKeyword then return true end
-    -- Prioritas 3: bergerak + besar
     if isMoving and isBig then return true end
 
     return false
@@ -1310,7 +1325,6 @@ local function findNearestBoss(maxRange)
 
     local nearest, nearestDist, nearestPos = nil, maxRange, nil
 
-    -- Search folder spesifik dulu (lebih cepat)
     local searchRoots = { Workspace }
     local folderNames = {
         "Monsters", "Bosses", "Enemies", "NPCs", "Mobs", "Chase",
@@ -1343,51 +1357,125 @@ local function findNearestBoss(maxRange)
 end
 
 --=============================================================
---  BOSS DEBUG BUTTON
+--  BOSS ESP
 --=============================================================
-local BossDebugBtn = new("TextButton", {
-    Parent = MainPage, Size = UDim2.new(1, 0, 0, 34),
-    BackgroundColor3 = CONFIG.Colors.Dark,
-    Text = "👾  SCAN BOSS (print ke F9)",
-    TextColor3 = CONFIG.Colors.SoftWhite,
-    Font = Enum.Font.GothamBold, TextSize = 13,
-    AutoButtonColor = false, BorderSizePixel = 0,
-    LayoutOrder = nextOrder(),
-})
-new("UICorner", {CornerRadius = UDim.new(0, 8), Parent = BossDebugBtn})
-new("UIStroke", {Color = CONFIG.Colors.Border, Thickness = 1, Parent = BossDebugBtn})
+local bossESPCache = {}
 
-BossDebugBtn.MouseButton1Click:Connect(function()
-    playClick()
-    print("========== BOSS SCAN v3 ==========")
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local myPos = hrp and hrp.Position
+function clearBossESP()
+    for boss, data in pairs(bossESPCache) do
+        pcall(function()
+            if data.highlight then data.highlight:Destroy() end
+            if data.billboard then data.billboard:Destroy() end
+        end)
+    end
+    bossESPCache = {}
+end
 
-    local count = 0
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("Model") then
-            local hum = obj:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                if not Players:GetPlayerFromCharacter(obj) then
-                    count = count + 1
-                    local ehrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
-                    local size = getModelSize(obj)
-                    local dist = (myPos and ehrp) and (myPos - ehrp.Position).Magnitude or -1
-                    local owner = obj:GetAttribute("Owner") or obj:GetAttribute("Player")
-                        or obj:GetAttribute("OwnerId") or obj:GetAttribute("UserId")
-                    print(string.format(
-                        "[%d] %s | HP:%d WS:%.1f Size:%.1f Dist:%.0f Owner:%s isBoss:%s",
-                        count, obj:GetFullName(), hum.Health, hum.WalkSpeed, size, dist,
-                        tostring(owner), tostring(isBossModel(obj))
-                    ))
+local function buildBossESP(boss)
+    local highlight = Instance.new("Highlight")
+    highlight.Adornee = boss
+    highlight.FillTransparency = 0.85
+    highlight.FillColor = Color3.fromRGB(255, 0, 0)
+    highlight.OutlineColor = Color3.fromRGB(255, 50, 50)
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = ScreenGui
+
+    local bb = Instance.new("BillboardGui")
+    bb.Adornee = boss
+    bb.Size = UDim2.new(0, 200, 0, 46)
+    bb.StudsOffset = Vector3.new(0, 5, 0)
+    bb.AlwaysOnTop = true
+    bb.MaxDistance = 500
+    bb.Parent = ScreenGui
+
+    local bg = Instance.new("Frame", bb)
+    bg.Size = UDim2.new(1, 0, 1, 0)
+    bg.BackgroundColor3 = Color3.fromRGB(60, 0, 0)
+    bg.BackgroundTransparency = 0.3
+    bg.BorderSizePixel = 0
+    Instance.new("UICorner", bg).CornerRadius = UDim.new(0, 8)
+    local stroke = Instance.new("UIStroke", bg)
+    stroke.Color = Color3.fromRGB(255, 80, 80)
+    stroke.Thickness = 2
+
+    local nameLbl = Instance.new("TextLabel", bg)
+    nameLbl.Size = UDim2.new(1, -8, 0, 20)
+    nameLbl.Position = UDim2.new(0, 4, 0, 2)
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.TextColor3 = Color3.fromRGB(255, 200, 200)
+    nameLbl.Font = Enum.Font.GothamBlack
+    nameLbl.TextSize = 14
+    nameLbl.TextStrokeTransparency = 0.3
+    nameLbl.Text = "👹 "..boss.Name
+
+    local distLbl = Instance.new("TextLabel", bg)
+    distLbl.Size = UDim2.new(1, -8, 0, 18)
+    distLbl.Position = UDim2.new(0, 4, 0, 22)
+    distLbl.BackgroundTransparency = 1
+    distLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    distLbl.Font = Enum.Font.GothamBold
+    distLbl.TextSize = 12
+    distLbl.TextStrokeTransparency = 0.4
+    distLbl.Text = "Distance: 0"
+
+    bossESPCache[boss] = {
+        highlight = highlight, billboard = bb, distLbl = distLbl,
+    }
+end
+
+task.spawn(function()
+    local lastScan = 0
+    local scanInterval = 0.3
+    while _G.LuxxyRunning do
+        local dt = RunService.Heartbeat:Wait()
+        if State.BossESP then
+            lastScan = lastScan + dt
+            if lastScan >= scanInterval then
+                lastScan = 0
+                local char = LocalPlayer.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                local myPos = hrp and hrp.Position
+                local alive = {}
+
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if obj:IsA("Model") and isBossModel(obj) then
+                        alive[obj] = true
+                        if not bossESPCache[obj] then
+                            buildBossESP(obj)
+                        end
+                        local ehrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+                        if ehrp and myPos then
+                            local d = (myPos - ehrp.Position).Magnitude
+                            local data = bossESPCache[obj]
+                            if data and data.distLbl then
+                                local r = getModelRadius(obj)
+                                data.distLbl.Text = string.format("Dist: %.0f | R:%.0f", d, r)
+                                if d < 30 then
+                                    data.distLbl.TextColor3 = Color3.fromRGB(255, 60, 60)
+                                elseif d < 80 then
+                                    data.distLbl.TextColor3 = Color3.fromRGB(255, 200, 60)
+                                else
+                                    data.distLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+                                end
+                            end
+                        end
+                    end
+                end
+
+                for boss, data in pairs(bossESPCache) do
+                    if not alive[boss] or not boss.Parent then
+                        pcall(function()
+                            data.highlight:Destroy(); data.billboard:Destroy()
+                        end)
+                        bossESPCache[boss] = nil
+                    end
                 end
             end
+        else
+            if next(bossESPCache) then clearBossESP() end
         end
     end
-    print("Total:", count)
-    print("=================================")
-    notify("LUXXY", "Boss scan selesai • cek F9")
 end)
 
 --=============================================================
@@ -1488,7 +1576,7 @@ local function findNearbyWall(pos, radius)
 end
 
 --=============================================================
---  BODY-VELOCITY MOVEMENT
+--  MOVEMENT + HITBOX-AWARE ESCAPE
 --=============================================================
 local moveState = { vel = nil, gyro = nil, active = false }
 
@@ -1551,20 +1639,24 @@ local function microStepMoveTo(targetPos, baseSpeed)
     local hoverPos = targetPos + Vector3.new(0, CONFIG.HoverDist, 0)
     local lastBossCheck = 0
     local boss, bdist, bpos = nil, math.huge, nil
+    local bossRadius = 5
     local t0 = tick()
     local currentVel = Vector3.zero
-    local lastFooterUpdate = tick()
     local currentSpeed = baseSpeed
     local lastHopTime = 0
     local hopUntil = 0
+    local lastCriticalHop = 0
+    local criticalHopUntil = 0
     local lastWallSeek = 0
     local wallTarget = nil
     local wallTargetUntil = 0
+    local escapeMode = false
+    local footerLast = 0
 
     while _G.LuxxyRunning and char.Parent and hrp.Parent and hum.Health > 0 and moveState.active do
         if not (State.StealEgg or State.StealBestEgg) then break end
         if not vel.Parent then break end
-        if tick() - t0 > 60 then break end
+        if tick() - t0 > 90 then break end
 
         if hum.WalkSpeed ~= CONFIG.FakeWalkSpeed then
             hum.WalkSpeed = CONFIG.FakeWalkSpeed
@@ -1573,6 +1665,11 @@ local function microStepMoveTo(targetPos, baseSpeed)
         if tick() - lastBossCheck > CONFIG.BossCheckInterval then
             lastBossCheck = tick()
             boss, bdist, bpos = findNearestBoss(CONFIG.BossDetectRange)
+
+            if boss then
+                bossRadius = getModelRadius(boss)
+            end
+
             if boss and bdist < CONFIG.BossDetectRange then
                 local ratio = 1 - math.clamp(bdist / CONFIG.BossDetectRange, 0, 1)
                 currentSpeed = baseSpeed * (1 + CONFIG.BossSpeedBoost * ratio)
@@ -1581,48 +1678,111 @@ local function microStepMoveTo(targetPos, baseSpeed)
             end
             currentSpeed = math.clamp(currentSpeed, 16, CONFIG.MaxSpeed)
 
-            if boss and bdist and bdist < CONFIG.BossHopRange and tick() - lastHopTime > 0.6 then
+            local escapeRange = bossRadius + CONFIG.BossSafeMargin
+            local safeRange = escapeRange + 20
+
+            if boss and bdist < escapeRange then
+                escapeMode = true
+            elseif not boss or bdist > safeRange then
+                escapeMode = false
+            end
+
+            if boss and bdist and bdist < CONFIG.BossHopRange and tick() - lastHopTime > 0.4 then
                 hopUntil = tick() + CONFIG.BossHopDuration
                 lastHopTime = tick()
                 vel.MaxForce = Vector3.new(1e5, 1e5, 1e5)
             end
+
+            -- CRITICAL hop
+            if boss and bdist and bdist < bossRadius + CONFIG.BossCriticalMargin
+                and tick() - lastCriticalHop > 0.8 then
+                criticalHopUntil = tick() + CONFIG.BossCriticalHopDur
+                lastCriticalHop = tick()
+                vel.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+            end
+
+            if tick() - footerLast > 0.3 then
+                footerLast = tick()
+                if boss and bpos then
+                    local prefix = "⚠ BOSS"
+                    if bdist < bossRadius + CONFIG.BossCriticalMargin then
+                        prefix = "🚨 CRITICAL"
+                    elseif escapeMode then
+                        prefix = "🚨 ESCAPE"
+                    end
+                    Footer.Text = string.format("%s %.0f stud (R:%.0f) | Speed %.0f",
+                        prefix, bdist, bossRadius, currentSpeed)
+                end
+            end
         end
 
         local isHopping = tick() < hopUntil
-        if not isHopping then
+        local isCriticalHop = tick() < criticalHopUntil
+        if not isHopping and not isCriticalHop then
             vel.MaxForce = Vector3.new(1e5, 0, 1e5)
         end
 
-        local toTarget = hoverPos - hrp.Position
-        local dist = toTarget.Magnitude
-        if dist < 4 then break end
-        local dir = toTarget.Unit
+        -- Direction
+        local dir
 
-        if boss and bdist < CONFIG.BossWallSeekRange and tick() - lastWallSeek > 2 then
-            lastWallSeek = tick()
-            local wall = findNearbyWall(hrp.Position, CONFIG.BossWallSeekRadius)
-            if wall then
-                wallTarget = wall.Position
-                wallTargetUntil = tick() + 1.5
-            end
-        end
-        if wallTarget and tick() < wallTargetUntil then
-            local wallDir = wallTarget - hrp.Position
-            if wallDir.Magnitude > 3 then
-                dir = (wallDir.Unit * 0.7 + dir * 0.3).Unit
-            end
-        else
-            wallTarget = nil
-        end
-
-        if boss and bpos and bdist < CONFIG.BossDodgeRange then
+        if escapeMode and boss and bpos and bdist then
             local away = hrp.Position - bpos
             away = Vector3.new(away.X, 0, away.Z)
-            if away.Magnitude > 0.1 then
-                local repel = away.Unit
-                local w = math.clamp((1 - bdist / CONFIG.BossDodgeRange) * 1.3, 0, 1)
-                dir = (dir * (1 - w) + repel * w)
-                if dir.Magnitude > 0.1 then dir = dir.Unit else dir = repel end
+            if away.Magnitude < 0.1 then
+                away = Vector3.new(math.random()-0.5, 0, math.random()-0.5)
+            end
+            local awayUnit = away.Unit
+
+            local isCritical = bdist < bossRadius + CONFIG.BossCriticalMargin
+
+            if isCritical then
+                -- Perpendicular escape
+                local toBoss = bpos - hrp.Position
+                toBoss = Vector3.new(toBoss.X, 0, toBoss.Z)
+                if toBoss.Magnitude < 0.1 then toBoss = awayUnit end
+                toBoss = toBoss.Unit
+
+                local perp = Vector3.new(-awayUnit.Z, 0, awayUnit.X)
+                if perp:Dot(toBoss) > 0 then
+                    perp = -perp
+                end
+                dir = (perp * 0.7 + awayUnit * 0.3)
+                if dir.Magnitude > 0.1 then dir = dir.Unit else dir = perp end
+            else
+                dir = awayUnit
+            end
+        else
+            local toTarget = hoverPos - hrp.Position
+            local dist = toTarget.Magnitude
+            if dist < 4 then break end
+            dir = toTarget.Unit
+
+            if boss and bdist < CONFIG.BossWallSeekRange and tick() - lastWallSeek > 2 then
+                lastWallSeek = tick()
+                local wall = findNearbyWall(hrp.Position, CONFIG.BossWallSeekRadius)
+                if wall then
+                    wallTarget = wall.Position
+                    wallTargetUntil = tick() + 1.5
+                end
+            end
+            if wallTarget and tick() < wallTargetUntil then
+                local wallDir = wallTarget - hrp.Position
+                if wallDir.Magnitude > 3 then
+                    dir = (wallDir.Unit * 0.7 + dir * 0.3).Unit
+                end
+            else
+                wallTarget = nil
+            end
+
+            if boss and bpos and bdist < CONFIG.BossDodgeRange then
+                local away = hrp.Position - bpos
+                away = Vector3.new(away.X, 0, away.Z)
+                if away.Magnitude > 0.1 then
+                    local repel = away.Unit
+                    local w = math.clamp((1 - bdist / CONFIG.BossDodgeRange) * 1.5, 0, 1)
+                    dir = (dir * (1 - w) + repel * w)
+                    if dir.Magnitude > 0.1 then dir = dir.Unit else dir = repel end
+                end
             end
         end
 
@@ -1631,7 +1791,9 @@ local function microStepMoveTo(targetPos, baseSpeed)
         dir = steerDir
 
         local targetVel
-        if isHopping then
+        if isCriticalHop then
+            targetVel = Vector3.new(dir.X * currentSpeed, CONFIG.BossCriticalHopSpeed, dir.Z * currentSpeed)
+        elseif isHopping then
             targetVel = Vector3.new(dir.X * currentSpeed, CONFIG.BossHopStep * 60, dir.Z * currentSpeed)
         else
             targetVel = dir * currentSpeed
@@ -1643,13 +1805,6 @@ local function microStepMoveTo(targetPos, baseSpeed)
         local lookAt = Vector3.new(currentVel.X, 0, currentVel.Z)
         if lookAt.Magnitude > 1 then
             gyro.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookAt)
-        end
-
-        if tick() - lastFooterUpdate > 0.5 then
-            lastFooterUpdate = tick()
-            if boss and bdist < 100 then
-                Footer.Text = string.format("⚠ BOSS %.0f | Speed %.0f", bdist, currentSpeed)
-            end
         end
 
         RunService.Heartbeat:Wait()
@@ -1802,8 +1957,14 @@ task.spawn(function()
                         end
 
                         if State.StealEgg or State.StealBestEgg then
-                            Footer.Text = "➜ Balik base"
-                            pcall(microStepMoveTo, getMyBase(), State.MoveSpeed)
+                            local b, bd = findNearestBoss(CONFIG.BossDetectRange)
+                            if b and bd < CONFIG.BossEscapeRange then
+                                Footer.Text = "🚨 Kabur dari boss dulu..."
+                                pcall(microStepMoveTo, getMyBase(), State.MoveSpeed)
+                            else
+                                Footer.Text = "➜ Balik base"
+                                pcall(microStepMoveTo, getMyBase(), State.MoveSpeed)
+                            end
                         end
                         task.wait(0.2)
                     end
@@ -1832,4 +1993,4 @@ end)
 
 selectTab("MAIN")
 notify("LUXXY", "v"..CONFIG.Version.." loaded 🌿")
-print("[LUXXY] Loaded • v"..CONFIG.Version.." • boss-detect v3 ready")
+print("[LUXXY] Loaded • v"..CONFIG.Version.." • hitbox-aware ready")
