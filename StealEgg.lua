@@ -1,7 +1,6 @@
 --=============================================================
---  STEAL AN EGG — LUXXY  v2.8.0
---  Walk-spoof • Boss adaptive speed • Anti-jitter avoid
---  Egg retry on drop • Strict biome • Auto-cleanup • Light ESP
+--  STEAL AN EGG — LUXXY  v3.1.0
+--  Anti-blink (speed cap + ownership reclaim) • Vertical escape
 --=============================================================
 
 if _G.LuxxyCleanup then pcall(_G.LuxxyCleanup) end
@@ -24,7 +23,6 @@ local Workspace         = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local Camera      = Workspace.CurrentCamera
 
--- cleanup sisa instance lama
 for _, obj in ipairs((function()
     local list = {}
     pcall(function()
@@ -71,7 +69,7 @@ end
 
 local CONFIG = {
     Title = "STEAL AN EGG — LUXXY",
-    Version = "2.8.0",
+    Version = "3.1.0",
     SaveFile = "LuxxyConfig.json",
     Thumbnail = "rbxassetid://134782047288874",
     Colors = {
@@ -82,22 +80,35 @@ local CONFIG = {
         Dark        = Color3.fromRGB(15, 30, 20),
         Darker      = Color3.fromRGB(8, 18, 12),
         Border      = Color3.fromRGB(120, 220, 150),
+        Danger      = Color3.fromRGB(255, 70, 70),
     },
     MoveSpeed = 60,
+    MaxSafeSpeed = 120,            -- batas aman anti-blink
     HoverDist = 3,
     FakeWalkSpeed = 16,
-    VelLerp = 0.35,
-    MoveToInterval = 4,
+    VelLerp = 0.2,                 -- smoothing lebih halus
+    MoveToInterval = 8,            -- jarang panggil MoveTo
     LookAhead = 12,
     AvoidStrength = 2.0,
+    -- Network ownership
+    NetworkReclaimInterval = 0.3,  -- reclaim tiap 0.3 detik
+    MinOwnerReclaimDiff = 200,     -- reclaim kalau GetNetworkOwner ≠ LocalPlayer
     -- Biome
     MinBiomeVolume = 40000,
     BiomeYPad = 80,
     PlayerBiomeRange = 350,
     -- Boss
-    BossDetectRange = 180,
-    BossSpeedBoost = 1.8,
-    BossCheckInterval = 0.25,
+    BossDetectRange = 220,
+    BossWarnRange   = 80,
+    BossClimbRange  = 45,
+    BossPanicRange  = 15,
+    BossBaseRushMult = 1.25,
+    BossClimbMult    = 1.35,
+    BossPanicMult    = 1.45,
+    BossPanicAltitude = 35,        -- turun dari 60
+    BossClimbAltitude = 25,        -- turun dari 40
+    EscapeHoldTime = 5,
+    BossCheckInterval = 0.1,
     -- Egg retry
     EggRetryMax = 3,
 }
@@ -111,23 +122,6 @@ local BIOME_LOOKUP = {}
 for _, b in ipairs(BIOMES) do
     BIOME_LOOKUP[string.lower(b)] = b
     BIOME_LOOKUP[string.lower(string.gsub(b, " ", ""))] = b
-end
-
-local RARITY = {
-    {name="Common",    cols={Color3.fromRGB(160,160,160), Color3.fromRGB(255,255,255)}, outline=Color3.fromRGB(200,200,200), value=1000},
-    {name="Uncommon",  cols={Color3.fromRGB(60,220,80),   Color3.fromRGB(255,255,255)}, outline=Color3.fromRGB(60,220,80), value=5000},
-    {name="Rare",      cols={Color3.fromRGB(40,120,255),  Color3.fromRGB(255,255,255)}, outline=Color3.fromRGB(40,120,255), value=25000},
-    {name="Epic",      cols={Color3.fromRGB(150,60,255),  Color3.fromRGB(255,255,255)}, outline=Color3.fromRGB(150,60,255), value=150000},
-    {name="Legendary", cols={Color3.fromRGB(255,220,40),  Color3.fromRGB(255,255,255)}, outline=Color3.fromRGB(255,220,40), value=800000},
-    {name="Mythic",    cols={Color3.fromRGB(255,60,60),   Color3.fromRGB(255,255,255)}, outline=Color3.fromRGB(255,60,60), value=3000000},
-    {name="Cosmic",    cols={Color3.fromRGB(80,20,140),   Color3.fromRGB(255,255,255)}, outline=Color3.fromRGB(180,80,255), value=15000000},
-    {name="Secret",    cols={Color3.fromRGB(90,90,90),    Color3.fromRGB(255,255,255)}, outline=Color3.fromRGB(255,255,255), value=80000000},
-    {name="Divine",    cols={Color3.fromRGB(255,255,255), Color3.fromRGB(255,120,220), Color3.fromRGB(160,60,255)}, outline=Color3.fromRGB(255,180,255), value=500000000},
-}
-local RARITY_NAMES, RARITY_DATA = {}, {}
-for _, r in ipairs(RARITY) do
-    RARITY_NAMES[r.name] = true
-    RARITY_DATA[r.name] = r
 end
 
 local EGG_DATA = {
@@ -148,7 +142,7 @@ local EGG_DATA = {
 local State = {
     StealEgg = false, StealBestEgg = false, ESP = false,
     MoveSpeed = CONFIG.MoveSpeed,
-    SelectedRarities = {}, SelectedBiomes = {},
+    SelectedBiomes = {},
 }
 
 local function saveConfig()
@@ -157,7 +151,6 @@ local function saveConfig()
             writefile(CONFIG.SaveFile, HttpService:JSONEncode({
                 StealEgg = State.StealEgg, StealBestEgg = State.StealBestEgg,
                 ESP = State.ESP, MoveSpeed = State.MoveSpeed,
-                SelectedRarities = State.SelectedRarities,
                 SelectedBiomes = State.SelectedBiomes,
             }))
         end
@@ -171,15 +164,17 @@ local function loadConfig()
         end
     end)
     if ok and res then
-        State.StealEgg         = res.StealEgg or false
-        State.StealBestEgg     = res.StealBestEgg or false
-        State.ESP              = res.ESP or false
-        State.MoveSpeed        = res.MoveSpeed or CONFIG.MoveSpeed
-        State.SelectedRarities = res.SelectedRarities or {}
-        State.SelectedBiomes   = res.SelectedBiomes or {}
+        State.StealEgg       = res.StealEgg or false
+        State.StealBestEgg   = res.StealBestEgg or false
+        State.ESP            = res.ESP or false
+        State.MoveSpeed      = res.MoveSpeed or CONFIG.MoveSpeed
+        State.SelectedBiomes = res.SelectedBiomes or {}
     end
 end
 loadConfig()
+
+-- clamp speed yang tersimpan
+State.MoveSpeed = math.min(State.MoveSpeed, CONFIG.MaxSafeSpeed)
 
 local function new(class, props, children)
     local obj = Instance.new(class)
@@ -340,7 +335,7 @@ new("TextLabel", {
     Parent = Header, Size = UDim2.new(1, -100, 0, 18),
     Position = UDim2.new(0, 82, 0, 42),
     BackgroundTransparency = 1,
-    Text = "v"..CONFIG.Version.."  •  boss radar+retry",
+    Text = "v"..CONFIG.Version.."  •  anti-blink",
     TextColor3 = CONFIG.Colors.SoftWhite, Font = Enum.Font.Gotham,
     TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
 })
@@ -553,11 +548,11 @@ makeToggle(MainPage, "🥚  STEAL EGG (biome aware)", State.StealEgg, function(v
     Footer.Text = v and "Steal Egg aktif • memindai biome..." or "Ready • idle"
 end, nextOrder())
 
-makeSlider(MainPage, "🏃 Move Speed (semua fitur)", 16, 500, State.MoveSpeed, function(v)
+makeSlider(MainPage, "🏃 Move Speed (max "..CONFIG.MaxSafeSpeed..")", 16, CONFIG.MaxSafeSpeed, State.MoveSpeed, function(v)
     State.MoveSpeed = v
 end, nextOrder())
 
-section(MainPage, "SELECT BIOME (filter utama)", nextOrder())
+section(MainPage, "SELECT BIOME (untuk STEAL EGG)", nextOrder())
 
 local BiomeHolder = new("Frame", {
     Parent = MainPage, Size = UDim2.new(1, 0, 0, 0),
@@ -645,82 +640,11 @@ SelAllBiome.MouseButton1Click:Connect(function()
     saveConfig()
 end)
 
-section(MainPage, "SELECT RARITY (kalau tersedia)", nextOrder())
-
-local RarityHolder = new("Frame", {
-    Parent = MainPage, Size = UDim2.new(1, 0, 0, 0),
-    AutomaticSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1, LayoutOrder = nextOrder(),
-})
-new("UIGridLayout", {
-    CellSize = UDim2.new(0.5, -4, 0, 34),
-    CellPadding = UDim2.new(0, 8, 0, 8),
-    SortOrder = Enum.SortOrder.LayoutOrder, Parent = RarityHolder,
-})
-
-local rarityButtons = {}
-local function refreshRarityVisual(name)
-    local e = rarityButtons[name]; if not e then return end
-    local on = State.SelectedRarities[name] == true
-    e.stroke.Color = on and e.colorA or CONFIG.Colors.Border
-    e.stroke.Thickness = on and 2.5 or 1
-    e.stroke.Transparency = on and 0 or 0.5
-    e.label.TextColor3 = on and CONFIG.Colors.White or CONFIG.Colors.SoftWhite
-    e.label.Text = (on and "✔  " or "")..name
-    e.btn.BackgroundTransparency = on and 0.15 or 0.65
-end
-
-for i, r in ipairs(RARITY) do
-    local b = new("TextButton", {
-        Parent = RarityHolder, Size = UDim2.new(0, 0, 0, 0),
-        BackgroundColor3 = CONFIG.Colors.Darker, BackgroundTransparency = 0.65,
-        Text = "", AutoButtonColor = false, BorderSizePixel = 0, LayoutOrder = i,
-    })
-    new("UICorner", {CornerRadius = UDim.new(0, 8), Parent = b})
-    local stroke = new("UIStroke", {Color = CONFIG.Colors.Border, Thickness = 1, Parent = b})
-    local label = new("TextLabel", {
-        Parent = b, Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
-        Text = r.name, TextColor3 = CONFIG.Colors.SoftWhite,
-        Font = Enum.Font.GothamBold, TextSize = 12,
-    })
-    applyGradient(b, r.cols, 0.6)
-    rarityButtons[r.name] = {btn=b, stroke=stroke, label=label, colorA=r.cols[1]}
-    refreshRarityVisual(r.name)
-    b.MouseButton1Click:Connect(function()
-        State.SelectedRarities[r.name] = not State.SelectedRarities[r.name]
-        playClick(); refreshRarityVisual(r.name); saveConfig()
-    end)
-end
-
-local SelAll = new("TextButton", {
-    Parent = MainPage, Size = UDim2.new(1, 0, 0, 34),
-    BackgroundColor3 = CONFIG.Colors.LeafGreen, Text = "✔  SELECT ALL RARITY",
-    TextColor3 = CONFIG.Colors.White, Font = Enum.Font.GothamBold,
-    TextSize = 14, AutoButtonColor = false, BorderSizePixel = 0,
-    LayoutOrder = nextOrder(),
-})
-new("UICorner", {CornerRadius = UDim.new(0, 8), Parent = SelAll})
-new("UIStroke", {Color = CONFIG.Colors.Border, Thickness = 2, Parent = SelAll})
-applyGradient(SelAll, {CONFIG.Colors.LeafGreen, CONFIG.Colors.BrightGreen, CONFIG.Colors.LeafGreen}, 0.4)
-
-local allOn = false
-SelAll.MouseButton1Click:Connect(function()
-    allOn = not allOn
-    for _, r in ipairs(RARITY) do
-        State.SelectedRarities[r.name] = allOn
-        refreshRarityVisual(r.name)
-    end
-    playClick()
-    SelAll.Text = allOn and "✕  DESELECT ALL RARITY" or "✔  SELECT ALL RARITY"
-    notify("LUXXY", allOn and "Semua rarity dipilih" or "Semua rarity dihapus")
-    saveConfig()
-end)
-
 section(MainPage, "BEST + ESP", nextOrder())
 
-makeToggle(MainPage, "👑  STEAL BEST EGG (dalam biome)", State.StealBestEgg, function(v)
+makeToggle(MainPage, "👑  STEAL BEST EGG (SEMUA biome)", State.StealBestEgg, function(v)
     State.StealBestEgg = v
-    notify("LUXXY", v and "Mencari best egg di biome terpilih..." or "Auto best OFF")
+    notify("LUXXY", v and "Mencari best egg di SEMUA biome..." or "Auto best OFF")
 end, nextOrder())
 
 makeToggle(MainPage, "🔍  ESP EGGS (light mode)", State.ESP, function(v)
@@ -729,19 +653,26 @@ makeToggle(MainPage, "🔍  ESP EGGS (light mode)", State.ESP, function(v)
 end, nextOrder())
 
 local InfoLabel = new("TextLabel", {
-    Parent = InfoPage, Size = UDim2.new(1, -12, 0, 520),
+    Parent = InfoPage, Size = UDim2.new(1, -12, 0, 580),
     Position = UDim2.new(0, 6, 0, 0),
     BackgroundColor3 = CONFIG.Colors.Darker, BackgroundTransparency = 0.3,
     Text = "🌿 STEAL AN EGG — LUXXY\nVersion : "..CONFIG.Version..
-        "\n\nNEW v2.8:\n"..
-        "  • Boss radar — speed naik saat boss dekat\n"..
-        "  • Egg jatuh → langsung ambil ulang (max "..CONFIG.EggRetryMax.."x)\n"..
-        "  • Anti-jitter obstacle (sticky steer)\n"..
-        "  • Toggle OFF → instant stop\n"..
-        "  • Strict biome filter\n\n"..
-        "Engine  : Walk-Spoof v5\n"..
-        "Biome   : "..table.concat(BIOMES, ", ")..
-        "\n\n— Luxxy 🌿",
+        "\n\nANTI-BLINK v3.1:\n"..
+        "  • Speed cap di "..CONFIG.MaxSafeSpeed.." stud/s\n"..
+        "  • Network ownership reclaim tiap "..CONFIG.NetworkReclaimInterval.."s\n"..
+        "  • Velocity smoothing (lerp "..CONFIG.VelLerp..")\n"..
+        "  • MoveTo jarang (tiap "..CONFIG.MoveToInterval.." frame)\n"..
+        "  • Boss escape speed max 1.45×\n\n"..
+        "ANTI-BOSS:\n"..
+        "  • Waspada (≤"..CONFIG.BossWarnRange.."): rush base\n"..
+        "  • Climb (≤"..CONFIG.BossClimbRange.."): naik diagonal → "..CONFIG.BossClimbAltitude.." stud\n"..
+        "  • Panic (≤"..CONFIG.BossPanicRange.."): naik lurus → "..CONFIG.BossPanicAltitude.." stud\n"..
+        "  • Hold escape "..CONFIG.EscapeHoldTime.."s setelah boss hilang\n\n"..
+        "FITUR:\n"..
+        "  • Best Egg cari SEMUA biome\n"..
+        "  • Egg jatuh → retry max "..CONFIG.EggRetryMax.."×\n"..
+        "  • Toggle OFF → instant stop\n\n"..
+        "Biome: "..table.concat(BIOMES, ", ").."\n\n— Luxxy 🌿",
     TextColor3 = CONFIG.Colors.SoftWhite, Font = Enum.Font.Gotham,
     TextSize = 12, TextWrapped = true,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
@@ -841,7 +772,7 @@ end)
 table.insert(Cleanup, function() cVp:Disconnect() end)
 
 --=============================================================
---  BIOME SYSTEM (strict + cached bounding box)
+--  BIOME SYSTEM
 --=============================================================
 local biomeRegions = {}
 
@@ -928,7 +859,6 @@ end
 local function getEggBiome(egg, pos)
     local byAnc = getBiomeByAncestor(egg)
     if byAnc then return byAnc end
-
     if not pos then
         if egg:IsA("BasePart") then pos = egg.Position
         elseif egg:IsA("Model") then
@@ -940,7 +870,6 @@ local function getEggBiome(egg, pos)
         local b = getBiomeByPosition(pos)
         if b then return b end
     end
-
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if hrp and pos then
@@ -948,7 +877,6 @@ local function getEggBiome(egg, pos)
             return getPlayerBiome()
         end
     end
-
     return nil
 end
 
@@ -1017,73 +945,6 @@ local function isEggObject(obj)
     return nameHas and true or false
 end
 
-local function matchRarityString(str)
-    if not str then return nil end
-    str = tostring(str)
-    for name, _ in pairs(RARITY_NAMES) do
-        if string.lower(str) == string.lower(name) then return name end
-    end
-    for name, _ in pairs(RARITY_NAMES) do
-        if string.find(string.lower(str), string.lower(name), 1, true) then return name end
-    end
-    return nil
-end
-
-local function scanAttrs(obj)
-    if not obj or not obj.GetAttributes then return nil end
-    local ok, attrs = pcall(function() return obj:GetAttributes() end)
-    if not ok or type(attrs) ~= "table" then return nil end
-    for k, v in pairs(attrs) do
-        local r = matchRarityString(v)
-        if r then return r end
-    end
-    return nil
-end
-
-local function getEggRarity(egg)
-    local r = scanAttrs(egg)
-    if r then return r end
-    if egg.Parent then
-        r = scanAttrs(egg.Parent)
-        if r then return r end
-        if egg.Parent.Parent then
-            r = scanAttrs(egg.Parent.Parent)
-            if r then return r end
-        end
-    end
-    for _, d in ipairs(egg:GetDescendants()) do
-        if d:IsA("ValueBase") then
-            local ok, val = pcall(function() return d.Value end)
-            if ok then
-                local m = matchRarityString(val)
-                if m then return m end
-            end
-        end
-        if d:IsA("StringValue") then
-            local m = matchRarityString(d.Value)
-            if m then return m end
-        end
-        if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
-            if d.Text and d.Text ~= "" then
-                local m = matchRarityString(d.Text)
-                if m then return m end
-            end
-        end
-        local nm = matchRarityString(d.Name)
-        if nm then return nm end
-    end
-    local m = matchRarityString(egg.Name)
-    if m then return m end
-    local p = egg.Parent
-    local depth = 0
-    while p and p ~= Workspace and depth < 5 do
-        local pm = matchRarityString(p.Name)
-        if pm then return pm end
-        p = p.Parent; depth = depth + 1
-    end
-    return nil
-end
-
 local function getEggMutation(egg)
     for _, key in ipairs({"Mutation","mutation","Mutated","mutated"}) do
         if egg.GetAttribute then
@@ -1141,10 +1002,7 @@ local function getEggPrice(egg)
             best = d.value
         end
     end
-    if best > 0 then return best end
-    local rar = getEggRarity(egg)
-    if rar and RARITY_DATA[rar] then return RARITY_DATA[rar].value end
-    return 0
+    return best
 end
 
 local function findEggs()
@@ -1155,23 +1013,9 @@ local function findEggs()
     return eggs
 end
 
-local function hasAnyRaritySelected()
-    for _, v in pairs(State.SelectedRarities) do if v then return true end end
-    return false
-end
-
 local function hasAnyBiomeSelected()
     for _, v in pairs(State.SelectedBiomes) do if v then return true end end
     return false
-end
-
-local function isSelectedRarity(egg)
-    if not hasAnyRaritySelected() then return true end
-    local rar = getEggRarity(egg)
-    if rar and RARITY_NAMES[rar] then
-        return State.SelectedRarities[rar] == true
-    end
-    return true
 end
 
 local function isSelectedBiome(egg, pos)
@@ -1197,13 +1041,11 @@ function clearAllESP()
 end
 
 local function buildESP(egg)
-    local rar = getEggRarity(egg) or "?"
     local mut = getEggMutation(egg)
     local price = getEggPrice(egg)
     local biome = getEggBiome(egg) or "Unknown"
 
-    local outlineColor = Color3.fromRGB(255,255,255)
-    if RARITY_DATA[rar] then outlineColor = RARITY_DATA[rar].outline end
+    local outlineColor = Color3.fromRGB(60, 200, 90)
     if mut then outlineColor = Color3.fromRGB(255,100,255) end
 
     local highlight = Instance.new("Highlight")
@@ -1216,7 +1058,7 @@ local function buildESP(egg)
 
     local bb = Instance.new("BillboardGui")
     bb.Adornee = egg
-    bb.Size = UDim2.new(0, 220, 0, 70)
+    bb.Size = UDim2.new(0, 220, 0, 60)
     bb.StudsOffset = Vector3.new(0, 3, 0)
     bb.AlwaysOnTop = true
     bb.MaxDistance = 350
@@ -1250,7 +1092,7 @@ local function buildESP(egg)
     infoLbl.Font = Enum.Font.Gotham
     infoLbl.TextSize = 11
     infoLbl.TextStrokeTransparency = 0.5
-    infoLbl.Text = "Rarity: "..rar.."   •   $"..fmtNum(price).."/s"
+    infoLbl.Text = price > 0 and ("💰 $"..fmtNum(price).."/s") or "💵 $?"
 
     local biomeLbl = Instance.new("TextLabel", bg)
     biomeLbl.Size = UDim2.new(1, -8, 0, 16)
@@ -1265,8 +1107,7 @@ local function buildESP(egg)
     espCache[egg] = {
         highlight = highlight, billboard = bb,
         nameLbl = nameLbl, infoLbl = infoLbl, biomeLbl = biomeLbl,
-        cachedRarity = rar, cachedPrice = price,
-        cachedBiome = biome, cachedMut = mut,
+        cachedPrice = price, cachedBiome = biome, cachedMut = mut,
     }
 end
 
@@ -1287,21 +1128,19 @@ task.spawn(function()
                         buildESP(egg)
                     else
                         local data = espCache[egg]
-                        local rar = getEggRarity(egg) or "?"
                         local price = getEggPrice(egg)
                         local biome = getEggBiome(egg) or "Unknown"
                         local mut = getEggMutation(egg)
-                        if rar ~= data.cachedRarity or price ~= data.cachedPrice
-                            or biome ~= data.cachedBiome or mut ~= data.cachedMut then
-                            data.cachedRarity = rar; data.cachedPrice = price
-                            data.cachedBiome = biome; data.cachedMut = mut
-                            local outlineColor = Color3.fromRGB(255,255,255)
-                            if RARITY_DATA[rar] then outlineColor = RARITY_DATA[rar].outline end
+                        if price ~= data.cachedPrice or biome ~= data.cachedBiome or mut ~= data.cachedMut then
+                            data.cachedPrice = price
+                            data.cachedBiome = biome
+                            data.cachedMut = mut
+                            local outlineColor = Color3.fromRGB(60, 200, 90)
                             if mut then outlineColor = Color3.fromRGB(255,100,255) end
                             data.highlight.OutlineColor = outlineColor
                             data.nameLbl.TextColor3 = outlineColor
                             data.nameLbl.Text = (mut and "✨ "..mut.." " or "")..egg.Name
-                            data.infoLbl.Text = "Rarity: "..rar.."   •   $"..fmtNum(price).."/s"
+                            data.infoLbl.Text = price > 0 and ("💰 $"..fmtNum(price).."/s") or "💵 $?"
                             data.biomeLbl.Text = "🌍 "..biome
                         end
                     end
@@ -1322,12 +1161,12 @@ task.spawn(function()
 end)
 
 --=============================================================
---  BOSS DETECTION + ADAPTIVE SPEED
+--  BOSS DETECTION
 --=============================================================
 local BOSS_KEYWORDS = {
     "boss", "guard", "chaser", "monster", "police", "cop",
     "enemy", "pursuer", "hunter", "evil", "demon", "grinch",
-    "thief", "captor", "secur", "warden", "npc",
+    "thief", "captor", "secur", "warden", "npc", "tembak", "pencuri",
 }
 
 local function isBossModel(model)
@@ -1364,12 +1203,12 @@ end
 local function findNearestBoss(maxRange)
     maxRange = maxRange or CONFIG.BossDetectRange
     local char = LocalPlayer.Character
-    if not char then return nil, math.huge end
+    if not char then return nil, nil, math.huge end
     local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil, math.huge end
+    if not hrp then return nil, nil, math.huge end
     local myPos = hrp.Position
 
-    local nearest, nearestDist = nil, maxRange
+    local nearest, nearestPos, nearestDist = nil, nil, maxRange
     for _, obj in ipairs(Workspace:GetDescendants()) do
         if isBossModel(obj) then
             local hum = obj:FindFirstChildOfClass("Humanoid")
@@ -1379,25 +1218,18 @@ local function findNearestBoss(maxRange)
                     local d = (ehrp.Position - myPos).Magnitude
                     if d < nearestDist then
                         nearest = obj
+                        nearestPos = ehrp.Position
                         nearestDist = d
                     end
                 end
             end
         end
     end
-    return nearest, nearestDist
-end
-
-local function getAdaptiveSpeed(baseSpeed)
-    local boss, dist = findNearestBoss(CONFIG.BossDetectRange)
-    if not boss or dist == math.huge then return baseSpeed, false, nil, math.huge end
-    local ratio = 1 - math.clamp(dist / CONFIG.BossDetectRange, 0, 1)
-    local extra = baseSpeed * CONFIG.BossSpeedBoost * ratio
-    return math.floor(baseSpeed + extra), true, boss, dist
+    return nearest, nearestPos, nearestDist
 end
 
 --=============================================================
---  ANTI-JITTER OBSTACLE AVOID (sticky direction)
+--  OBSTACLE AVOID
 --=============================================================
 local steerMemory = { side = nil, stuckFrames = 0 }
 
@@ -1413,7 +1245,6 @@ local function computeSteerDirection(hrp, char, dirUnit, lookAhead)
 
     local origin = hrp.Position
     local fwdHit = Workspace:Raycast(origin, dirUnit * lookAhead, rayParams)
-
     if not fwdHit then
         resetSteer()
         return dirUnit, false
@@ -1445,7 +1276,6 @@ local function computeSteerDirection(hrp, char, dirUnit, lookAhead)
     if not steerMemory.side then
         local hitL = Workspace:Raycast(origin, left * lookAhead, rayParams)
         local hitR = Workspace:Raycast(origin, right * lookAhead, rayParams)
-
         if hitL and not hitR then
             steerMemory.side = "right"
         elseif hitR and not hitL then
@@ -1486,7 +1316,7 @@ local function computeSteerDirection(hrp, char, dirUnit, lookAhead)
 end
 
 --=============================================================
---  WALK-SPOOF v5
+--  WALK-SPOOF v8 — ANTI-BLINK
 --=============================================================
 local spoofState = { vel = nil, gyro = nil, active = false }
 
@@ -1533,7 +1363,7 @@ local function spoofMoveTo(targetPos, speed)
     stopSpoof()
     local vel = Instance.new("BodyVelocity")
     vel.Name = "LuxxySpoofVelocity"
-    vel.MaxForce = Vector3.new(1e5, 0, 1e5)
+    vel.MaxForce = Vector3.new(1e5, 1e5, 1e5)
     vel.Velocity = Vector3.zero
     vel.Parent = hrp
 
@@ -1547,7 +1377,8 @@ local function spoofMoveTo(targetPos, speed)
 
     spoofState.vel, spoofState.gyro, spoofState.active = vel, gyro, true
 
-    local baseSpeed = math.clamp(speed or State.MoveSpeed, 16, 500)
+    -- Speed di-clamp ke batas aman
+    local baseSpeed = math.clamp(speed or State.MoveSpeed, 16, CONFIG.MaxSafeSpeed)
     local currentSpeed = baseSpeed
     local targetSpeed = baseSpeed
 
@@ -1558,8 +1389,15 @@ local function spoofMoveTo(targetPos, speed)
     local frameCounter = 0
     local jumpCooldown = 0
     local lastBossCheck = 0
+    local lastNetReclaim = 0
     local lookAhead = math.max(CONFIG.LookAhead, baseSpeed * 0.15)
-    local lastFooterBoss = tick()
+
+    local escapeActive = false
+    local escapeMode = "none"
+    local escapeUntil = 0
+    local lastEscapeFooter = tick()
+    local groundY = hrp.Position.Y
+    local panicTargetY = nil
 
     while _G.LuxxyRunning and char.Parent and hrp.Parent and hum.Health > 0 do
         if not (State.StealEgg or State.StealBestEgg) then break end
@@ -1573,24 +1411,123 @@ local function spoofMoveTo(targetPos, speed)
             hum.WalkSpeed = CONFIG.FakeWalkSpeed
         end
 
+        -- === NETWORK OWNERSHIP RECLAIM (anti-blink utama) ===
+        if tick() - lastNetReclaim > CONFIG.NetworkReclaimInterval then
+            lastNetReclaim = tick()
+            pcall(function()
+                local owner = hrp:GetNetworkOwner()
+                if owner ~= LocalPlayer then
+                    hrp:SetNetworkOwner(LocalPlayer)
+                end
+            end)
+        end
+
+        -- === BOSS CHECK ===
         if tick() - lastBossCheck > CONFIG.BossCheckInterval then
             lastBossCheck = tick()
-            local newSpeed, hasBoss, boss, bdist = getAdaptiveSpeed(baseSpeed)
-            targetSpeed = newSpeed
-            if hasBoss and tick() - lastFooterBoss > 1 then
-                lastFooterBoss = tick()
-                Footer.Text = "⚠️ BOSS "..math.floor(bdist).." stud  •  speed "..math.floor(currentSpeed)
+            local boss, bossPos, bossDist = findNearestBoss(CONFIG.BossDetectRange)
+
+            if bossPos and bossDist < CONFIG.BossWarnRange then
+                escapeActive = true
+                escapeUntil = tick() + CONFIG.EscapeHoldTime
+
+                if bossDist < CONFIG.BossPanicRange then
+                    escapeMode = "panic"
+                    if not panicTargetY then
+                        panicTargetY = hrp.Position.Y + CONFIG.BossPanicAltitude
+                    end
+                elseif bossDist < CONFIG.BossClimbRange then
+                    escapeMode = "climb"
+                    panicTargetY = nil
+                else
+                    escapeMode = "waspada"
+                    panicTargetY = nil
+                end
+
+                if tick() - lastEscapeFooter > 0.7 then
+                    lastEscapeFooter = tick()
+                    local tag = escapeMode == "panic" and "🚨 PANIC" or (escapeMode == "climb" and "⚠️ CLIMB" or "⚠️ WASPADA")
+                    Footer.Text = tag.." — Boss "..math.floor(bossDist).." stud"
+                end
+            else
+                if not (escapeActive and tick() < escapeUntil) then
+                    if escapeActive then
+                        escapeActive = false
+                        escapeMode = "none"
+                        panicTargetY = nil
+                    end
+                end
             end
         end
+
+        -- === TARGET & SPEED ===
+        local dirUnit
+        local localTarget
+
+        if escapeActive and escapeMode == "panic" and panicTargetY then
+            local boss, bossPos = findNearestBoss(CONFIG.BossDetectRange)
+            local horizDir = Vector3.zero
+            if bossPos then
+                horizDir = hrp.Position - bossPos
+                horizDir = Vector3.new(horizDir.X, 0, horizDir.Z)
+                if horizDir.Magnitude > 0.1 then horizDir = horizDir.Unit * 0.3 else horizDir = Vector3.zero end
+            end
+            local upDir = Vector3.new(0, 1, 0)
+            dirUnit = (upDir + horizDir).Unit
+            localTarget = hrp.Position + dirUnit * 20
+            targetSpeed = math.min(baseSpeed * CONFIG.BossPanicMult, CONFIG.MaxSafeSpeed)
+            if hrp.Position.Y >= panicTargetY then
+                dirUnit = horizDir.Magnitude > 0.1 and horizDir.Unit or Vector3.new(0, 0, 0)
+                localTarget = hrp.Position + dirUnit * 10
+                targetSpeed = baseSpeed * 0.8
+            end
+
+        elseif escapeActive and escapeMode == "climb" then
+            local boss, bossPos = findNearestBoss(CONFIG.BossDetectRange)
+            local awayH = Vector3.new(1, 0, 0)
+            if bossPos then
+                awayH = hrp.Position - bossPos
+                awayH = Vector3.new(awayH.X, 0, awayH.Z)
+                if awayH.Magnitude > 0.1 then awayH = awayH.Unit end
+            end
+            local climbTargetY = groundY + CONFIG.BossClimbAltitude
+            local needUp = hrp.Position.Y < climbTargetY
+            local up = needUp and 0.9 or 0.15
+            dirUnit = (awayH + Vector3.new(0, up, 0)).Unit
+            localTarget = hrp.Position + dirUnit * 15
+            targetSpeed = math.min(baseSpeed * CONFIG.BossClimbMult, CONFIG.MaxSafeSpeed)
+
+        elseif escapeActive and escapeMode == "waspada" then
+            local basePos = getMyBase()
+            local toBase = basePos - hrp.Position
+            if toBase.Magnitude > 5 then
+                dirUnit = Vector3.new(toBase.X, 0.2, toBase.Z).Unit
+                localTarget = basePos
+            else
+                dirUnit = Vector3.zero
+                localTarget = hrp.Position
+            end
+            targetSpeed = math.min(baseSpeed * CONFIG.BossBaseRushMult, CONFIG.MaxSafeSpeed)
+
+        else
+            local toTarget = hoverPos - hrp.Position
+            local dist = toTarget.Magnitude
+            if dist < 4 then break end
+            dirUnit = toTarget.Unit
+            localTarget = hoverPos
+            targetSpeed = baseSpeed
+        end
+
+        if tick() - t0 > 120 then break end
+
         currentSpeed = currentSpeed + (targetSpeed - currentSpeed) * 0.15
 
-        local toTarget = hoverPos - hrp.Position
-        local dist = toTarget.Magnitude
-        if dist < 4 then break end
-        if tick() - t0 > 60 then break end
+        local steerDir = dirUnit
+        local shouldJump = false
+        if not escapeActive or escapeMode == "waspada" then
+            steerDir, shouldJump = computeSteerDirection(hrp, char, dirUnit, lookAhead)
+        end
 
-        local dirUnit = toTarget.Unit
-        local steerDir, shouldJump = computeSteerDirection(hrp, char, dirUnit, lookAhead)
         if shouldJump and tick() - jumpCooldown > 0.8 then
             hum.Jump = true
             jumpCooldown = tick()
@@ -1600,25 +1537,38 @@ local function spoofMoveTo(targetPos, speed)
         currentVel = currentVel:Lerp(targetVel, CONFIG.VelLerp)
         vel.Velocity = currentVel
 
-        local lookAt = currentVel.Magnitude > 1 and (hrp.Position + currentVel) or (hrp.Position + dirUnit)
-        gyro.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(lookAt.X, hrp.Position.Y, lookAt.Z))
+        local horizLook = Vector3.new(currentVel.X, 0, currentVel.Z)
+        if horizLook.Magnitude > 1 then
+            gyro.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + horizLook.Unit)
+        elseif dirUnit.Magnitude > 0.1 then
+            local dirH = Vector3.new(dirUnit.X, 0, dirUnit.Z)
+            if dirH.Magnitude > 0.1 then
+                gyro.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + dirH.Unit)
+            end
+        end
 
         if frameCounter % CONFIG.MoveToInterval == 0 then
             pcall(function()
-                hum:MoveTo(hrp.Position + currentVel.Unit * 4)
+                if currentVel.Magnitude > 0.5 then
+                    hum:MoveTo(hrp.Position + currentVel.Unit * 4)
+                end
             end)
         end
 
-        if math.abs(lastDist - dist) < 0.4 then
-            if tick() - lastProgress > 1.5 and tick() - jumpCooldown > 0.5 then
-                hum.Jump = true
-                jumpCooldown = tick()
+        local toT = hoverPos - hrp.Position
+        local dNow = toT.Magnitude
+        if not escapeActive then
+            if math.abs(lastDist - dNow) < 0.4 then
+                if tick() - lastProgress > 1.5 and tick() - jumpCooldown > 0.5 then
+                    hum.Jump = true
+                    jumpCooldown = tick()
+                    lastProgress = tick()
+                end
+            else
                 lastProgress = tick()
             end
-        else
-            lastProgress = tick()
+            lastDist = dNow
         end
-        lastDist = dist
     end
 
     if vel then vel.Velocity = Vector3.zero end
@@ -1663,17 +1613,15 @@ local function tryGrabEgg(egg)
 end
 
 local function eggScore(egg)
-    local rar = getEggRarity(egg)
     local price = getEggPrice(egg)
     local mut = getEggMutation(egg)
     local base = price > 0 and price or 0
-    if base == 0 and rar and RARITY_DATA[rar] then base = RARITY_DATA[rar].value end
     if mut then base = base * 2.5 end
     return base
 end
 
 --=============================================================
---  MAIN STEAL LOOP (egg retry on drop)
+--  MAIN STEAL LOOP
 --=============================================================
 task.spawn(function()
     local lastBiomeRefresh = 0
@@ -1694,18 +1642,16 @@ task.spawn(function()
                 local bestScore, bestDist = -1, math.huge
                 for _, egg in ipairs(eggs) do
                     local pos = getEggPosition(egg)
-                    if isSelectedRarity(egg) and isSelectedBiome(egg, pos) then
-                        local sc = eggScore(egg)
-                        local d = (myPos and pos) and (myPos - pos).Magnitude or 0
-                        if sc > bestScore or (sc == bestScore and d < bestDist) then
-                            bestScore = sc; bestDist = d; target = egg
-                        end
+                    local sc = eggScore(egg)
+                    local d = (myPos and pos) and (myPos - pos).Magnitude or 0
+                    if sc > bestScore or (sc == bestScore and d < bestDist) then
+                        bestScore = sc; bestDist = d; target = egg
                     end
                 end
             else
                 for _, egg in ipairs(eggs) do
                     local pos = getEggPosition(egg)
-                    if isSelectedRarity(egg) and isSelectedBiome(egg, pos) then
+                    if isSelectedBiome(egg, pos) then
                         target = egg; break
                     end
                 end
@@ -1715,14 +1661,12 @@ task.spawn(function()
                 local pos = getEggPosition(target)
                 if pos then
                     local biome = getEggBiome(target, pos) or "?"
-                    local rar = getEggRarity(target) or "?"
                     local price = getEggPrice(target)
                     local mut = getEggMutation(target)
-                    Footer.Text = "➜ ["..biome.."] "..target.Name.." ("..rar..
+                    Footer.Text = "➜ ["..biome.."] "..target.Name..
                         (price > 0 and (" $"..fmtNum(price)) or "")..
-                        (mut and (" ✨"..mut) or "")..")"
+                        (mut and (" ✨"..mut) or "")
 
-                    -- RETRY LOOP: kalau egg jatuh → langsung ambil ulang, tidak balik base
                     local retries = 0
                     while retries <= CONFIG.EggRetryMax do
                         if not (State.StealEgg or State.StealBestEgg) then break end
@@ -1758,8 +1702,11 @@ task.spawn(function()
                 local biomeList = {}
                 for b, v in pairs(State.SelectedBiomes) do if v then table.insert(biomeList, b) end end
                 local biomeStr = #biomeList > 0 and (" ["..table.concat(biomeList, ",").."]") or ""
-                Footer.Text = (State.StealBestEgg and "Cari best egg" or "Cari egg")
-                    ..biomeStr.." ("..#eggs.." egg, "..#biomeRegions.." region)"
+                if State.StealBestEgg then
+                    Footer.Text = "Cari best egg SEMUA biome ("..#eggs.." egg)"
+                else
+                    Footer.Text = "Cari egg"..biomeStr.." ("..#eggs.." egg)"
+                end
                 task.wait(0.5)
             end
         else
@@ -1776,4 +1723,4 @@ end)
 
 selectTab("MAIN")
 notify("LUXXY", "v"..CONFIG.Version.." loaded 🌿")
-print("[LUXXY] Loaded • v"..CONFIG.Version.." • boss radar + egg retry ready")
+print("[LUXXY] Loaded • v"..CONFIG.Version.." • anti-blink ready")
