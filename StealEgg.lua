@@ -1,5 +1,3 @@
-
---// SERVICES
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
 local TweenService      = game:GetService("TweenService")
@@ -1028,7 +1026,3 @@ end)
 if State.StealEgg or State.StealBestEgg then
     notify("LUXXY", "Config dimuat • fitur aktif")
 end
-
-selectTab("MAIN")
-notify("LUXXY", "Script loaded 🌿  Tekan 🌿 LUXXY untuk membuka")
-print("[LUXXY] Steal An Egg loaded • v"..CONFIG.Version)
