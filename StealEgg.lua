@@ -1,7 +1,6 @@
 --=============================================================
---  STEAL AN EGG — LUXXY  v3.0.5
---  Hitbox-Aware Anti-Boss (perpendicular escape + critical hop)
---  Boss ESP • Escape Mode • Biome Filter • Best Egg semua biome
+--  STEAL AN EGG — LUXXY  v3.1.0
+--  DIRECT REMOTE STEAL (RE/ToolTrigger) + Hitbox-Aware Anti-Boss
 --=============================================================
 
 if _G.LuxxyCleanup then pcall(_G.LuxxyCleanup) end
@@ -20,9 +19,44 @@ local UserInputService  = game:GetService("UserInputService")
 local HttpService       = game:GetService("HttpService")
 local SoundService      = game:GetService("SoundService")
 local Workspace         = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera      = Workspace.CurrentCamera
+
+-- ============================================================
+-- REMOTE REFERENCES
+-- ============================================================
+local Remotes = {
+    ToolTrigger = nil,         -- RE/ToolTrigger/Trigger
+    AskFieldEggCarry = nil,    -- RF/EggWorld/AskFieldEggCarry
+    ProbeSatchel = nil,        -- RE/RigSync/ProbeSatchel
+}
+
+-- Safe fetch remotes
+local function safeGetRemote(path)
+    local ok, result = pcall(function()
+        local obj = ReplicatedStorage
+        for _, part in ipairs(path) do
+            obj = obj:WaitForChild(part, 2)
+            if not obj then return nil end
+        end
+        return obj
+    end)
+    if ok then return result end
+    return nil
+end
+
+task.spawn(function()
+    Remotes.ToolTrigger       = safeGetRemote({"Packages", "Networking", "RE/ToolTrigger/Trigger"})
+    Remotes.AskFieldEggCarry  = safeGetRemote({"Packages", "Networking", "RF/EggWorld/AskFieldEggCarry"})
+    Remotes.ProbeSatchel      = safeGetRemote({"Packages", "Networking", "RE/RigSync/ProbeSatchel"})
+
+    print("[LUXXY] Remote status:")
+    print("  ToolTrigger:", Remotes.ToolTrigger ~= nil)
+    print("  AskFieldEggCarry:", Remotes.AskFieldEggCarry ~= nil)
+    print("  ProbeSatchel:", Remotes.ProbeSatchel ~= nil)
+end)
 
 for _, obj in ipairs((function()
     local list = {}
@@ -70,7 +104,7 @@ end
 
 local CONFIG = {
     Title = "STEAL AN EGG — LUXXY",
-    Version = "3.0.5",
+    Version = "3.1.0",
     SaveFile = "LuxxyConfig.json",
     Thumbnail = "rbxassetid://134782047288874",
     Colors = {
@@ -91,7 +125,7 @@ local CONFIG = {
     MinBiomeVolume = 40000,
     BiomeYPad = 80,
     PlayerBiomeRange = 350,
-    -- Boss detection
+    -- Boss
     BossDetectRange = 250,
     BossSpeedBoost = 1.5,
     BossCheckInterval = 0.1,
@@ -103,7 +137,6 @@ local CONFIG = {
     BossHopDuration = 0.2,
     BossMinSize = 4,
     BossMinWalkSpeed = 3,
-    -- Hitbox awareness
     BossSafeMargin = 12,
     BossCriticalMargin = 5,
     BossCriticalHopSpeed = 75,
@@ -112,6 +145,9 @@ local CONFIG = {
     EggRetryMax = 3,
     EggScanInterval = 0.5,
     BiomeScanInterval = 8,
+    -- Remote steal
+    RemoteStealCooldown = 0.4,
+    RemoteStealRange = 12,    -- jarak maks untuk coba remote steal (fallback: pakai prompt)
 }
 
 local BIOMES = {
@@ -159,6 +195,7 @@ local EGG_DATA = {
 
 local State = {
     StealEgg = false, StealBestEgg = false, ESP = false, BossESP = false,
+    RemoteFirst = true,     -- coba fire remote dulu
     MoveSpeed = CONFIG.MoveSpeed,
     SelectedBiomes = {},
 }
@@ -169,6 +206,7 @@ local function saveConfig()
             writefile(CONFIG.SaveFile, HttpService:JSONEncode({
                 StealEgg = State.StealEgg, StealBestEgg = State.StealBestEgg,
                 ESP = State.ESP, BossESP = State.BossESP,
+                RemoteFirst = State.RemoteFirst,
                 MoveSpeed = State.MoveSpeed,
                 SelectedBiomes = State.SelectedBiomes,
             }))
@@ -187,6 +225,7 @@ local function loadConfig()
         State.StealBestEgg   = res.StealBestEgg or false
         State.ESP            = res.ESP or false
         State.BossESP        = res.BossESP or false
+        State.RemoteFirst    = res.RemoteFirst ~= false
         State.MoveSpeed      = res.MoveSpeed or CONFIG.MoveSpeed
         State.SelectedBiomes = res.SelectedBiomes or {}
     end
@@ -352,7 +391,7 @@ new("TextLabel", {
     Parent = Header, Size = UDim2.new(1, -100, 0, 18),
     Position = UDim2.new(0, 82, 0, 42),
     BackgroundTransparency = 1,
-    Text = "v"..CONFIG.Version.."  •  hitbox-aware",
+    Text = "v"..CONFIG.Version.."  •  remote steal",
     TextColor3 = CONFIG.Colors.SoftWhite, Font = Enum.Font.Gotham,
     TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
 })
@@ -570,6 +609,11 @@ makeSlider(MainPage, "🏃 Base Speed (stud/s)", 40, 260, State.MoveSpeed, funct
     State.MoveSpeed = v
 end, nextOrder())
 
+makeToggle(MainPage, "⚡  REMOTE STEAL FIRST (via ToolTrigger)", State.RemoteFirst, function(v)
+    State.RemoteFirst = v
+    notify("LUXXY", v and "Coba remote dulu, prompt sebagai fallback" or "Selalu pakai proximity prompt")
+end, nextOrder())
+
 section(MainPage, "SELECT BIOME (Steal Egg only)", nextOrder())
 
 local BiomeHolder = new("Frame", {
@@ -670,36 +714,36 @@ makeToggle(MainPage, "🔍  ESP EGGS", State.ESP, function(v)
     if not v and clearAllESP then clearAllESP() end
 end, nextOrder())
 
-makeToggle(MainPage, "👾  ESP BOSS (outline + jarak)", State.BossESP, function(v)
+makeToggle(MainPage, "👾  ESP BOSS", State.BossESP, function(v)
     State.BossESP = v
     if not v and clearBossESP then clearBossESP() end
 end, nextOrder())
 
 local InfoLabel = new("TextLabel", {
-    Parent = InfoPage, Size = UDim2.new(1, -12, 0, 600),
+    Parent = InfoPage, Size = UDim2.new(1, -12, 0, 620),
     Position = UDim2.new(0, 6, 0, 0),
     BackgroundColor3 = CONFIG.Colors.Darker, BackgroundTransparency = 0.3,
     Text = "🌿 STEAL AN EGG — LUXXY\nVersion : "..CONFIG.Version..
-        "\n\nHITBOX-AWARE ANTI-BOSS:\n"..
-        "• Radius boss dihitung dari bounding box\n"..
-        "• Escape range = radius + margin (auto)\n"..
-        "• Normal: kabur menjauh dari boss\n"..
-        "• CRITICAL (boss sangat dekat):\n"..
-        "  - Kabur PERPENDIKULAR (keluar samping)\n"..
-        "  - Hop tinggi (naik 75 stud/s)\n"..
-        "• Footer tunjukkan radius boss (R:XX)\n\n"..
-        "BOSS ESP:\n"..
-        "• Outline merah + label jarak real-time\n"..
-        "• Warna berubah: merah<30, kuning<80\n\n"..
-        "TUNING (CONFIG):\n"..
-        "• BossSafeMargin = "..CONFIG.BossSafeMargin.."\n"..
-        "• BossCriticalMargin = "..CONFIG.BossCriticalMargin.."\n"..
-        "• BossCriticalHopSpeed = "..CONFIG.BossCriticalHopSpeed.."\n"..
-        "• BossCriticalHopDur = "..CONFIG.BossCriticalHopDur.."\n\n"..
-        "Kalau boss besar masih catch:\n"..
-        "• Naikkan BossSafeMargin ke 20\n"..
-        "• Naikkan BossCriticalHopSpeed ke 100\n"..
-        "• Naikkan BossCriticalHopDur ke 0.5\n\n— Luxxy 🌿",
+        "\n\nREMOTE STEAL (NEW):\n"..
+        "• Pakai RE/ToolTrigger/Trigger\n"..
+        "• Scan tool egg di karakter\n"..
+        "• Fire remote → grab egg\n"..
+        "• Fallback ke ProximityPrompt\n"..
+        "• Toggle ⚡ untuk aktif/nonaktif\n\n"..
+        "HITBOX-AWARE ANTI-BOSS:\n"..
+        "• Radius boss dari bounding box\n"..
+        "• Escape perpendicular saat critical\n"..
+        "• Critical hop 75 stud/s\n\n"..
+        "CARA PAKAI:\n"..
+        "1. Toggle ESP EGGS untuk lihat egg\n"..
+        "2. Pilih biome (atau SELECT ALL)\n"..
+        "3. Toggle STEAL EGG ON\n"..
+        "4. Bot jalan ke egg, remote steal,\n"..
+        "   dan balik base otomatis\n\n"..
+        "Kalau remote tidak bekerja:\n"..
+        "• Nonaktifkan ⚡ REMOTE STEAL FIRST\n"..
+        "  → otomatis pakai proximity prompt\n"..
+        "• Cek F9 untuk log remote status\n\n— Luxxy 🌿",
     TextColor3 = CONFIG.Colors.SoftWhite, Font = Enum.Font.Gotham,
     TextSize = 12, TextWrapped = true,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
@@ -1081,6 +1125,89 @@ local function isSelectedBiome(egg, pos)
     local biome = getEggBiome(egg, pos)
     if not biome then return false end
     return State.SelectedBiomes[biome] == true
+end
+
+--=============================================================
+--  REMOTE STEAL CORE
+--=============================================================
+-- Cari tool "egg"/"telur" di karakter
+local function findEggToolsInCharacter()
+    local char = LocalPlayer.Character
+    if not char then return {} end
+    local tools = {}
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA("Tool") then
+            local n = string.lower(item.Name)
+            if string.find(n, "egg", 1, true) or string.find(n, "telur", 1, true) then
+                table.insert(tools, item)
+            end
+        end
+    end
+    return tools
+end
+
+-- Fire remote ToolTrigger untuk semua tool egg yang ada di karakter
+local function remoteStealAttempt(egg)
+    if not Remotes.ToolTrigger then return false end
+    local tools = findEggToolsInCharacter()
+    if #tools == 0 then return false end
+
+    local fired = false
+    for _, tool in ipairs(tools) do
+        local ok = pcall(function()
+            Remotes.ToolTrigger:FireServer(tool)
+        end)
+        if ok then fired = true end
+    end
+    return fired
+end
+
+-- Get egg carry status
+local function checkEggCarry()
+    if not Remotes.AskFieldEggCarry then return nil end
+    local ok, result = pcall(function()
+        return Remotes.AskFieldEggCarry:InvokeServer()
+    end)
+    if ok then return result end
+    return nil
+end
+
+--=============================================================
+--  TRY GRAB EGG (Remote + Prompt fallback)
+--=============================================================
+local lastRemoteFire = 0
+
+local function tryGrabEgg(egg)
+    -- 1) Coba remote steal dulu
+    if State.RemoteFirst and Remotes.ToolTrigger then
+        if tick() - lastRemoteFire > CONFIG.RemoteStealCooldown then
+            lastRemoteFire = tick()
+            local fired = remoteStealAttempt(egg)
+            if fired then
+                print("[LUXXY] Remote steal fired for:", egg.Name)
+                return true
+            end
+        end
+    end
+
+    -- 2) Fallback: ProximityPrompt
+    local prompt = findStealPrompt(egg)
+    if prompt then
+        if prompt:IsA("ProximityPrompt") then
+            pcall(function() fireproximityprompt(prompt) end); return true
+        elseif prompt:IsA("ClickDetector") then
+            pcall(function() fireclickdetector(prompt) end); return true
+        end
+    end
+
+    -- 3) Fallback: Tool:Activate()
+    local char = LocalPlayer.Character
+    if char then
+        local tool = char:FindFirstChildOfClass("Tool")
+            or (LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChildOfClass("Tool"))
+        if tool then pcall(function() tool:Activate() end); return true end
+    end
+    return false
 end
 
 --=============================================================
@@ -1576,7 +1703,7 @@ local function findNearbyWall(pos, radius)
 end
 
 --=============================================================
---  MOVEMENT + HITBOX-AWARE ESCAPE
+--  MOVEMENT + ESCAPE
 --=============================================================
 local moveState = { vel = nil, gyro = nil, active = false }
 
@@ -1693,7 +1820,6 @@ local function microStepMoveTo(targetPos, baseSpeed)
                 vel.MaxForce = Vector3.new(1e5, 1e5, 1e5)
             end
 
-            -- CRITICAL hop
             if boss and bdist and bdist < bossRadius + CONFIG.BossCriticalMargin
                 and tick() - lastCriticalHop > 0.8 then
                 criticalHopUntil = tick() + CONFIG.BossCriticalHopDur
@@ -1722,7 +1848,6 @@ local function microStepMoveTo(targetPos, baseSpeed)
             vel.MaxForce = Vector3.new(1e5, 0, 1e5)
         end
 
-        -- Direction
         local dir
 
         if escapeMode and boss and bpos and bdist then
@@ -1736,7 +1861,6 @@ local function microStepMoveTo(targetPos, baseSpeed)
             local isCritical = bdist < bossRadius + CONFIG.BossCriticalMargin
 
             if isCritical then
-                -- Perpendicular escape
                 local toBoss = bpos - hrp.Position
                 toBoss = Vector3.new(toBoss.X, 0, toBoss.Z)
                 if toBoss.Magnitude < 0.1 then toBoss = awayUnit end
@@ -1833,24 +1957,6 @@ local function getMyBase()
     return sp and sp.Position or Vector3.new(0, 20, 0)
 end
 
-local function tryGrabEgg(egg)
-    local prompt = findStealPrompt(egg)
-    if prompt then
-        if prompt:IsA("ProximityPrompt") then
-            pcall(function() fireproximityprompt(prompt) end); return true
-        elseif prompt:IsA("ClickDetector") then
-            pcall(function() fireclickdetector(prompt) end); return true
-        end
-    end
-    local char = LocalPlayer.Character
-    if char then
-        local tool = char:FindFirstChildOfClass("Tool")
-            or (LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChildOfClass("Tool"))
-        if tool then pcall(function() tool:Activate() end); return true end
-    end
-    return false
-end
-
 local function eggScore(egg)
     local rar = getEggRarity(egg)
     local price = getEggPrice(egg)
@@ -1943,6 +2049,7 @@ task.spawn(function()
                             end
                             if not (State.StealEgg or State.StealBestEgg) then break end
 
+                            -- Try grab: remote dulu, fallback prompt
                             pcall(tryGrabEgg, target)
                             task.wait(0.4)
 
@@ -1993,4 +2100,4 @@ end)
 
 selectTab("MAIN")
 notify("LUXXY", "v"..CONFIG.Version.." loaded 🌿")
-print("[LUXXY] Loaded • v"..CONFIG.Version.." • hitbox-aware ready")
+print("[LUXXY] Loaded • v"..CONFIG.Version.." • remote steal ready")
