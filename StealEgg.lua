@@ -1,6 +1,6 @@
 --=============================================================
---  STEAL AN EGG — LUXXY  v3.1.0
---  DIRECT REMOTE STEAL (RE/ToolTrigger) + Hitbox-Aware Anti-Boss
+--  STEAL AN EGG — LUXXY  v3.1.1
+--  Anti-Correction Movement • Remote Steal • Hitbox-Aware Boss
 --=============================================================
 
 if _G.LuxxyCleanup then pcall(_G.LuxxyCleanup) end
@@ -25,15 +25,17 @@ local LocalPlayer = Players.LocalPlayer
 local Camera      = Workspace.CurrentCamera
 
 -- ============================================================
--- REMOTE REFERENCES
+--  REMOTE REFERENCES
 -- ============================================================
 local Remotes = {
-    ToolTrigger = nil,         -- RE/ToolTrigger/Trigger
-    AskFieldEggCarry = nil,    -- RF/EggWorld/AskFieldEggCarry
-    ProbeSatchel = nil,        -- RE/RigSync/ProbeSatchel
+    ToolTrigger = nil,
+    AskFieldEggCarry = nil,
+    ProbeSatchel = nil,
+    RigPrimed = nil,
+    RigCorrection = nil,
+    RigWipe = nil,
 }
 
--- Safe fetch remotes
 local function safeGetRemote(path)
     local ok, result = pcall(function()
         local obj = ReplicatedStorage
@@ -51,12 +53,27 @@ task.spawn(function()
     Remotes.ToolTrigger       = safeGetRemote({"Packages", "Networking", "RE/ToolTrigger/Trigger"})
     Remotes.AskFieldEggCarry  = safeGetRemote({"Packages", "Networking", "RF/EggWorld/AskFieldEggCarry"})
     Remotes.ProbeSatchel      = safeGetRemote({"Packages", "Networking", "RE/RigSync/ProbeSatchel"})
+    Remotes.RigPrimed         = safeGetRemote({"Packages", "Networking", "RE/RigSync/Primed"})
+    Remotes.RigCorrection     = safeGetRemote({"Packages", "Networking", "RE/RigSync/CorrectionBegan"})
+    Remotes.RigWipe           = safeGetRemote({"Packages", "Networking", "RE/RigSync/AskRigWipe"})
 
     print("[LUXXY] Remote status:")
     print("  ToolTrigger:", Remotes.ToolTrigger ~= nil)
     print("  AskFieldEggCarry:", Remotes.AskFieldEggCarry ~= nil)
     print("  ProbeSatchel:", Remotes.ProbeSatchel ~= nil)
+    print("  RigPrimed:", Remotes.RigPrimed ~= nil)
+    print("  RigCorrection:", Remotes.RigCorrection ~= nil)
 end)
+
+local function forceRigResync()
+    local char = LocalPlayer.Character
+    if not char then return false end
+    if Remotes.RigPrimed then
+        pcall(function() Remotes.RigPrimed:FireServer(char) end)
+        return true
+    end
+    return false
+end
 
 for _, obj in ipairs((function()
     local list = {}
@@ -104,7 +121,7 @@ end
 
 local CONFIG = {
     Title = "STEAL AN EGG — LUXXY",
-    Version = "3.1.0",
+    Version = "3.1.1",
     SaveFile = "LuxxyConfig.json",
     Thumbnail = "rbxassetid://134782047288874",
     Colors = {
@@ -116,18 +133,26 @@ local CONFIG = {
         Darker      = Color3.fromRGB(8, 18, 12),
         Border      = Color3.fromRGB(120, 220, 150),
     },
-    MoveSpeed = 120,
-    MaxSpeed  = 260,
+    MoveSpeed = 130,
+    MaxSpeed  = 180,       -- cap aman (6 stud/tick @ 30Hz server tick)
     HoverDist = 3,
     FakeWalkSpeed = 16,
     LookAhead = 12,
     AvoidStrength = 2.0,
+    -- Anti-correction
+    SafeSpeedCap = 180,     -- hard limit
+    SmoothAccel = 0.08,     -- lerp velocity (semakin kecil = semakin smooth)
+    CorrectionPauseDur = 0.6, -- pause gerak kalau terdeteksi correction
+    CorrectionSpeedDrop = 0.4, -- kalikan speed × ini setelah correction
+    ResyncInterval = 3.0,   -- fire RigPrimed tiap N detik
+    PositionWatchSensitivity = 15, -- delta stud yg dianggap correction
+    -- Biome
     MinBiomeVolume = 40000,
     BiomeYPad = 80,
     PlayerBiomeRange = 350,
     -- Boss
     BossDetectRange = 250,
-    BossSpeedBoost = 1.5,
+    BossSpeedBoost = 1.4,
     BossCheckInterval = 0.1,
     BossDodgeRange = 35,
     BossWallSeekRange = 25,
@@ -141,13 +166,13 @@ local CONFIG = {
     BossCriticalMargin = 5,
     BossCriticalHopSpeed = 75,
     BossCriticalHopDur = 0.35,
+    BossEscapeRange = 45,
     -- Egg
     EggRetryMax = 3,
     EggScanInterval = 0.5,
     BiomeScanInterval = 8,
     -- Remote steal
     RemoteStealCooldown = 0.4,
-    RemoteStealRange = 12,    -- jarak maks untuk coba remote steal (fallback: pakai prompt)
 }
 
 local BIOMES = {
@@ -195,7 +220,8 @@ local EGG_DATA = {
 
 local State = {
     StealEgg = false, StealBestEgg = false, ESP = false, BossESP = false,
-    RemoteFirst = true,     -- coba fire remote dulu
+    RemoteFirst = true,
+    AntiCorrection = true,
     MoveSpeed = CONFIG.MoveSpeed,
     SelectedBiomes = {},
 }
@@ -207,6 +233,7 @@ local function saveConfig()
                 StealEgg = State.StealEgg, StealBestEgg = State.StealBestEgg,
                 ESP = State.ESP, BossESP = State.BossESP,
                 RemoteFirst = State.RemoteFirst,
+                AntiCorrection = State.AntiCorrection,
                 MoveSpeed = State.MoveSpeed,
                 SelectedBiomes = State.SelectedBiomes,
             }))
@@ -226,6 +253,7 @@ local function loadConfig()
         State.ESP            = res.ESP or false
         State.BossESP        = res.BossESP or false
         State.RemoteFirst    = res.RemoteFirst ~= false
+        State.AntiCorrection = res.AntiCorrection ~= false
         State.MoveSpeed      = res.MoveSpeed or CONFIG.MoveSpeed
         State.SelectedBiomes = res.SelectedBiomes or {}
     end
@@ -391,7 +419,7 @@ new("TextLabel", {
     Parent = Header, Size = UDim2.new(1, -100, 0, 18),
     Position = UDim2.new(0, 82, 0, 42),
     BackgroundTransparency = 1,
-    Text = "v"..CONFIG.Version.."  •  remote steal",
+    Text = "v"..CONFIG.Version.."  •  anti-correction",
     TextColor3 = CONFIG.Colors.SoftWhite, Font = Enum.Font.Gotham,
     TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
 })
@@ -605,13 +633,36 @@ makeToggle(MainPage, "🥚  STEAL EGG (biome filter)", State.StealEgg, function(
     print("[LUXXY] StealEgg toggle =", v)
 end, nextOrder())
 
-makeSlider(MainPage, "🏃 Base Speed (stud/s)", 40, 260, State.MoveSpeed, function(v)
-    State.MoveSpeed = v
+makeSlider(MainPage, "🏃 Base Speed (anti-correction cap 180)", 40, 180, State.MoveSpeed, function(v)
+    State.MoveSpeed = math.min(v, CONFIG.SafeSpeedCap)
 end, nextOrder())
 
-makeToggle(MainPage, "⚡  REMOTE STEAL FIRST (via ToolTrigger)", State.RemoteFirst, function(v)
+makeToggle(MainPage, "🛡  ANTI-CORRECTION (smooth move)", State.AntiCorrection, function(v)
+    State.AntiCorrection = v
+    notify("LUXXY", v and "Anti-correction aktif" or "Speed full (risiko kesentak)")
+end, nextOrder())
+
+local ResyncBtn = new("TextButton", {
+    Parent = MainPage, Size = UDim2.new(1, 0, 0, 34),
+    BackgroundColor3 = CONFIG.Colors.Dark,
+    Text = "🔄  FORCE RIG RESYNC",
+    TextColor3 = CONFIG.Colors.SoftWhite,
+    Font = Enum.Font.GothamBold, TextSize = 13,
+    AutoButtonColor = false, BorderSizePixel = 0,
+    LayoutOrder = nextOrder(),
+})
+new("UICorner", {CornerRadius = UDim.new(0, 8), Parent = ResyncBtn})
+new("UIStroke", {Color = CONFIG.Colors.Border, Thickness = 1, Parent = ResyncBtn})
+
+ResyncBtn.MouseButton1Click:Connect(function()
+    playClick()
+    local ok = forceRigResync()
+    notify("LUXXY", ok and "Rig re-sync dikirim" or "Remote tidak tersedia")
+end)
+
+makeToggle(MainPage, "⚡  REMOTE STEAL FIRST", State.RemoteFirst, function(v)
     State.RemoteFirst = v
-    notify("LUXXY", v and "Coba remote dulu, prompt sebagai fallback" or "Selalu pakai proximity prompt")
+    notify("LUXXY", v and "Coba remote dulu" or "Selalu prompt")
 end, nextOrder())
 
 section(MainPage, "SELECT BIOME (Steal Egg only)", nextOrder())
@@ -704,9 +755,9 @@ end)
 
 section(MainPage, "BEST + ESP", nextOrder())
 
-makeToggle(MainPage, "👑  STEAL BEST EGG (semua biome)", State.StealBestEgg, function(v)
+makeToggle(MainPage, "👑  STEAL BEST EGG", State.StealBestEgg, function(v)
     State.StealBestEgg = v
-    notify("LUXXY", v and "Mencari best egg di SEMUA biome..." or "Auto best OFF")
+    notify("LUXXY", v and "Best egg semua biome" or "Best OFF")
 end, nextOrder())
 
 makeToggle(MainPage, "🔍  ESP EGGS", State.ESP, function(v)
@@ -724,26 +775,26 @@ local InfoLabel = new("TextLabel", {
     Position = UDim2.new(0, 6, 0, 0),
     BackgroundColor3 = CONFIG.Colors.Darker, BackgroundTransparency = 0.3,
     Text = "🌿 STEAL AN EGG — LUXXY\nVersion : "..CONFIG.Version..
-        "\n\nREMOTE STEAL (NEW):\n"..
-        "• Pakai RE/ToolTrigger/Trigger\n"..
-        "• Scan tool egg di karakter\n"..
-        "• Fire remote → grab egg\n"..
-        "• Fallback ke ProximityPrompt\n"..
-        "• Toggle ⚡ untuk aktif/nonaktif\n\n"..
-        "HITBOX-AWARE ANTI-BOSS:\n"..
-        "• Radius boss dari bounding box\n"..
-        "• Escape perpendicular saat critical\n"..
-        "• Critical hop 75 stud/s\n\n"..
-        "CARA PAKAI:\n"..
-        "1. Toggle ESP EGGS untuk lihat egg\n"..
-        "2. Pilih biome (atau SELECT ALL)\n"..
-        "3. Toggle STEAL EGG ON\n"..
-        "4. Bot jalan ke egg, remote steal,\n"..
-        "   dan balik base otomatis\n\n"..
-        "Kalau remote tidak bekerja:\n"..
-        "• Nonaktifkan ⚡ REMOTE STEAL FIRST\n"..
-        "  → otomatis pakai proximity prompt\n"..
-        "• Cek F9 untuk log remote status\n\n— Luxxy 🌿",
+        "\n\nANTI-CORRECTION SYSTEM:\n"..
+        "Game pakai RigSync/CorrectionBegan — server\n"..
+        "cek delta posisi client. Kalau > 6 stud/tick\n"..
+        "server revert (karakter kesentak balik).\n\n"..
+        "SOLUSI 4 LAPIS:\n"..
+        "1. Speed cap di 180 stud/s\n"..
+        "2. Smooth acceleration (0.08 lerp)\n"..
+        "3. Auto-detect correction → pause + slow down\n"..
+        "4. Periodic RigPrimed fire (re-sync tiap 3s)\n\n"..
+        "KALAU MASIH KESENTAK:\n"..
+        "• Turunkan slider speed ke 80-100\n"..
+        "• Matikan toggle 🛡 ANTI-CORRECTION dan set\n"..
+        "  speed 60-80 (super slow tapi aman)\n"..
+        "• Klik 🔄 FORCE RIG RESYNC manual\n\n"..
+        "REMOTE STEAL:\n"..
+        "• RE/ToolTrigger/Trigger dengan tool egg\n"..
+        "• Fallback: ProximityPrompt\n\n"..
+        "HITBOX-AWARE BOSS:\n"..
+        "• Radius dari bounding box\n"..
+        "• Perpendicular escape saat critical\n\n— Luxxy 🌿",
     TextColor3 = CONFIG.Colors.SoftWhite, Font = Enum.Font.Gotham,
     TextSize = 12, TextWrapped = true,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
@@ -841,6 +892,18 @@ local cVp = Camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
     end
 end)
 table.insert(Cleanup, function() cVp:Disconnect() end)
+
+--=============================================================
+--  PERIODIC RIG RESYNC (background task)
+--=============================================================
+task.spawn(function()
+    while _G.LuxxyRunning do
+        task.wait(CONFIG.ResyncInterval)
+        if State.StealEgg or State.StealBestEgg then
+            pcall(forceRigResync)
+        end
+    end
+end)
 
 --=============================================================
 --  BIOME SYSTEM
@@ -1128,9 +1191,8 @@ local function isSelectedBiome(egg, pos)
 end
 
 --=============================================================
---  REMOTE STEAL CORE
+--  REMOTE STEAL
 --=============================================================
--- Cari tool "egg"/"telur" di karakter
 local function findEggToolsInCharacter()
     local char = LocalPlayer.Character
     if not char then return {} end
@@ -1146,12 +1208,10 @@ local function findEggToolsInCharacter()
     return tools
 end
 
--- Fire remote ToolTrigger untuk semua tool egg yang ada di karakter
 local function remoteStealAttempt(egg)
     if not Remotes.ToolTrigger then return false end
     local tools = findEggToolsInCharacter()
     if #tools == 0 then return false end
-
     local fired = false
     for _, tool in ipairs(tools) do
         local ok = pcall(function()
@@ -1162,35 +1222,19 @@ local function remoteStealAttempt(egg)
     return fired
 end
 
--- Get egg carry status
-local function checkEggCarry()
-    if not Remotes.AskFieldEggCarry then return nil end
-    local ok, result = pcall(function()
-        return Remotes.AskFieldEggCarry:InvokeServer()
-    end)
-    if ok then return result end
-    return nil
-end
-
---=============================================================
---  TRY GRAB EGG (Remote + Prompt fallback)
---=============================================================
 local lastRemoteFire = 0
 
 local function tryGrabEgg(egg)
-    -- 1) Coba remote steal dulu
     if State.RemoteFirst and Remotes.ToolTrigger then
         if tick() - lastRemoteFire > CONFIG.RemoteStealCooldown then
             lastRemoteFire = tick()
             local fired = remoteStealAttempt(egg)
             if fired then
-                print("[LUXXY] Remote steal fired for:", egg.Name)
+                print("[LUXXY] Remote steal fired:", egg.Name)
                 return true
             end
         end
     end
-
-    -- 2) Fallback: ProximityPrompt
     local prompt = findStealPrompt(egg)
     if prompt then
         if prompt:IsA("ProximityPrompt") then
@@ -1199,8 +1243,6 @@ local function tryGrabEgg(egg)
             pcall(function() fireclickdetector(prompt) end); return true
         end
     end
-
-    -- 3) Fallback: Tool:Activate()
     local char = LocalPlayer.Character
     if char then
         local tool = char:FindFirstChildOfClass("Tool")
@@ -1407,38 +1449,25 @@ end
 local function isBossModel(model)
     if not model:IsA("Model") then return false end
     if Players:GetPlayerFromCharacter(model) then return false end
-
     local hum = model:FindFirstChildOfClass("Humanoid")
     if not hum or hum.Health <= 0 then return false end
-
     local hrp = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
     if not hrp then return false end
-
-    local owner = model:GetAttribute("Owner")
-        or model:GetAttribute("Player")
-        or model:GetAttribute("OwnerId")
-        or model:GetAttribute("UserId")
+    local owner = model:GetAttribute("Owner") or model:GetAttribute("Player")
+        or model:GetAttribute("OwnerId") or model:GetAttribute("UserId")
         or model:GetAttribute("OwnerName")
     if isOwnedByLocalPlayer(owner) then return false end
-
     if containsAnyStr(model.Name, BOSS_PET_BLACKLIST) then return false end
-
-    local hasBossAttr = model:GetAttribute("IsBoss")
-        or model:GetAttribute("Boss")
-        or model:GetAttribute("Enemy")
-        or model:GetAttribute("Chase")
+    local hasBossAttr = model:GetAttribute("IsBoss") or model:GetAttribute("Boss")
+        or model:GetAttribute("Enemy") or model:GetAttribute("Chase")
     local isMoving = hum.WalkSpeed >= CONFIG.BossMinWalkSpeed
-
     if not isMoving and not hasBossAttr then return false end
-
     local hasKeyword = containsAnyStr(model.Name, BOSS_KEYWORDS)
     local size = getModelSize(model)
     local isBig = size >= CONFIG.BossMinSize
-
     if hasBossAttr then return true end
     if isMoving and hasKeyword then return true end
     if isMoving and isBig then return true end
-
     return false
 end
 
@@ -1449,9 +1478,7 @@ local function findNearestBoss(maxRange)
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil, math.huge, nil end
     local myPos = hrp.Position
-
     local nearest, nearestDist, nearestPos = nil, maxRange, nil
-
     local searchRoots = { Workspace }
     local folderNames = {
         "Monsters", "Bosses", "Enemies", "NPCs", "Mobs", "Chase",
@@ -1462,19 +1489,16 @@ local function findNearestBoss(maxRange)
         local folder = Workspace:FindFirstChild(name)
         if folder then table.insert(searchRoots, folder) end
     end
-
     for _, root in ipairs(searchRoots) do
         for _, obj in ipairs(root:GetChildren()) do
-            if obj:IsA("Model") then
-                if isBossModel(obj) then
-                    local ehrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
-                    if ehrp then
-                        local d = (ehrp.Position - myPos).Magnitude
-                        if d < nearestDist then
-                            nearest = obj
-                            nearestDist = d
-                            nearestPos = ehrp.Position
-                        end
+            if obj:IsA("Model") and isBossModel(obj) then
+                local ehrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+                if ehrp then
+                    local d = (ehrp.Position - myPos).Magnitude
+                    if d < nearestDist then
+                        nearest = obj
+                        nearestDist = d
+                        nearestPos = ehrp.Position
                     end
                 end
             end
@@ -1564,7 +1588,6 @@ task.spawn(function()
                 local hrp = char and char:FindFirstChild("HumanoidRootPart")
                 local myPos = hrp and hrp.Position
                 local alive = {}
-
                 for _, obj in ipairs(Workspace:GetDescendants()) do
                     if obj:IsA("Model") and isBossModel(obj) then
                         alive[obj] = true
@@ -1578,18 +1601,13 @@ task.spawn(function()
                             if data and data.distLbl then
                                 local r = getModelRadius(obj)
                                 data.distLbl.Text = string.format("Dist: %.0f | R:%.0f", d, r)
-                                if d < 30 then
-                                    data.distLbl.TextColor3 = Color3.fromRGB(255, 60, 60)
-                                elseif d < 80 then
-                                    data.distLbl.TextColor3 = Color3.fromRGB(255, 200, 60)
-                                else
-                                    data.distLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-                                end
+                                if d < 30 then data.distLbl.TextColor3 = Color3.fromRGB(255,60,60)
+                                elseif d < 80 then data.distLbl.TextColor3 = Color3.fromRGB(255,200,60)
+                                else data.distLbl.TextColor3 = Color3.fromRGB(255,255,255) end
                             end
                         end
                     end
                 end
-
                 for boss, data in pairs(bossESPCache) do
                     if not alive[boss] or not boss.Parent then
                         pcall(function()
@@ -1703,7 +1721,7 @@ local function findNearbyWall(pos, radius)
 end
 
 --=============================================================
---  MOVEMENT + ESCAPE
+--  ANTI-CORRECTION MOVEMENT
 --=============================================================
 local moveState = { vel = nil, gyro = nil, active = false }
 
@@ -1780,22 +1798,70 @@ local function microStepMoveTo(targetPos, baseSpeed)
     local escapeMode = false
     local footerLast = 0
 
+    -- === ANTI-CORRECTION STATE ===
+    local lastPos = hrp.Position
+    local lastPosCheck = tick()
+    local correctionPause = 0           -- waktu pause karena correction
+    local speedMultiplier = 1.0          -- speed × ini (turunkan saat correction)
+    local correctionCount = 0            -- berapa kali correction terdeteksi
+    local lastResyncFire = tick()
+
     while _G.LuxxyRunning and char.Parent and hrp.Parent and hum.Health > 0 and moveState.active do
         if not (State.StealEgg or State.StealBestEgg) then break end
         if not vel.Parent then break end
-        if tick() - t0 > 90 then break end
+        if tick() - t0 > 120 then break end
 
         if hum.WalkSpeed ~= CONFIG.FakeWalkSpeed then
             hum.WalkSpeed = CONFIG.FakeWalkSpeed
         end
 
+        -- === DETECT POSITION CORRECTION ===
+        if State.AntiCorrection then
+            local now = tick()
+            local dt = now - lastPosCheck
+            if dt > 0.05 then
+                local nowPos = hrp.Position
+                local moved = (nowPos - lastPos).Magnitude
+                local expected = currentVel.Magnitude * dt
+                -- Kalau posisi tiba-tiba bergerak lebih dari yang seharusnya
+                -- (bisa jadi server revert posisi kita) → detection
+                -- Atau kalau karakter "kesentak balik": jarak moved
+                -- lebih kecil dari expected (posisi stuck/balik)
+                local diff = math.abs(moved - expected)
+                if diff > CONFIG.PositionWatchSensitivity
+                    and currentVel.Magnitude > 30 then
+                    -- Detected correction
+                    correctionCount = correctionCount + 1
+                    correctionPause = now + CONFIG.CorrectionPauseDur
+                    speedMultiplier = CONFIG.CorrectionSpeedDrop
+                    print(string.format("[LUXXY] Correction #%d detected (diff %.1f)", correctionCount, diff))
+                    -- Re-sync supaya server update posisi
+                    pcall(forceRigResync)
+                else
+                    -- Smooth recovery
+                    speedMultiplier = math.min(1.0, speedMultiplier + 0.02)
+                end
+                lastPos = nowPos
+                lastPosCheck = now
+            end
+        else
+            speedMultiplier = 1.0
+        end
+
+        -- === PERIODIC RESYNC ===
+        if tick() - lastResyncFire > CONFIG.ResyncInterval then
+            lastResyncFire = tick()
+            pcall(forceRigResync)
+        end
+
+        -- === CORRECTION PAUSE ===
+        local isPaused = tick() < correctionPause
+
+        -- Boss check
         if tick() - lastBossCheck > CONFIG.BossCheckInterval then
             lastBossCheck = tick()
             boss, bdist, bpos = findNearestBoss(CONFIG.BossDetectRange)
-
-            if boss then
-                bossRadius = getModelRadius(boss)
-            end
+            if boss then bossRadius = getModelRadius(boss) end
 
             if boss and bdist < CONFIG.BossDetectRange then
                 local ratio = 1 - math.clamp(bdist / CONFIG.BossDetectRange, 0, 1)
@@ -1804,10 +1870,10 @@ local function microStepMoveTo(targetPos, baseSpeed)
                 currentSpeed = baseSpeed
             end
             currentSpeed = math.clamp(currentSpeed, 16, CONFIG.MaxSpeed)
+            currentSpeed = currentSpeed * speedMultiplier
 
             local escapeRange = bossRadius + CONFIG.BossSafeMargin
             local safeRange = escapeRange + 20
-
             if boss and bdist < escapeRange then
                 escapeMode = true
             elseif not boss or bdist > safeRange then
@@ -1819,7 +1885,6 @@ local function microStepMoveTo(targetPos, baseSpeed)
                 lastHopTime = tick()
                 vel.MaxForce = Vector3.new(1e5, 1e5, 1e5)
             end
-
             if boss and bdist and bdist < bossRadius + CONFIG.BossCriticalMargin
                 and tick() - lastCriticalHop > 0.8 then
                 criticalHopUntil = tick() + CONFIG.BossCriticalHopDur
@@ -1836,8 +1901,9 @@ local function microStepMoveTo(targetPos, baseSpeed)
                     elseif escapeMode then
                         prefix = "🚨 ESCAPE"
                     end
-                    Footer.Text = string.format("%s %.0f stud (R:%.0f) | Speed %.0f",
-                        prefix, bdist, bossRadius, currentSpeed)
+                    Footer.Text = string.format("%s %.0f (R:%.0f) | Spd %.0f%s",
+                        prefix, bdist, bossRadius, currentSpeed,
+                        isPaused and " | ⏸" or (correctionCount > 0 and " | 🛡" or ""))
                 end
             end
         end
@@ -1848,28 +1914,21 @@ local function microStepMoveTo(targetPos, baseSpeed)
             vel.MaxForce = Vector3.new(1e5, 0, 1e5)
         end
 
+        -- Direction
         local dir
-
         if escapeMode and boss and bpos and bdist then
             local away = hrp.Position - bpos
             away = Vector3.new(away.X, 0, away.Z)
-            if away.Magnitude < 0.1 then
-                away = Vector3.new(math.random()-0.5, 0, math.random()-0.5)
-            end
+            if away.Magnitude < 0.1 then away = Vector3.new(math.random()-0.5, 0, math.random()-0.5) end
             local awayUnit = away.Unit
-
             local isCritical = bdist < bossRadius + CONFIG.BossCriticalMargin
-
             if isCritical then
                 local toBoss = bpos - hrp.Position
                 toBoss = Vector3.new(toBoss.X, 0, toBoss.Z)
                 if toBoss.Magnitude < 0.1 then toBoss = awayUnit end
                 toBoss = toBoss.Unit
-
                 local perp = Vector3.new(-awayUnit.Z, 0, awayUnit.X)
-                if perp:Dot(toBoss) > 0 then
-                    perp = -perp
-                end
+                if perp:Dot(toBoss) > 0 then perp = -perp end
                 dir = (perp * 0.7 + awayUnit * 0.3)
                 if dir.Magnitude > 0.1 then dir = dir.Unit else dir = perp end
             else
@@ -1891,12 +1950,8 @@ local function microStepMoveTo(targetPos, baseSpeed)
             end
             if wallTarget and tick() < wallTargetUntil then
                 local wallDir = wallTarget - hrp.Position
-                if wallDir.Magnitude > 3 then
-                    dir = (wallDir.Unit * 0.7 + dir * 0.3).Unit
-                end
-            else
-                wallTarget = nil
-            end
+                if wallDir.Magnitude > 3 then dir = (wallDir.Unit * 0.7 + dir * 0.3).Unit end
+            else wallTarget = nil end
 
             if boss and bpos and bdist < CONFIG.BossDodgeRange then
                 local away = hrp.Position - bpos
@@ -1914,8 +1969,11 @@ local function microStepMoveTo(targetPos, baseSpeed)
         local steerDir = computeSteerDirection(hrp, char, dir, lookAhead)
         dir = steerDir
 
+        -- Velocity dengan smooth accel (anti-correction)
         local targetVel
-        if isCriticalHop then
+        if isPaused then
+            targetVel = Vector3.zero
+        elseif isCriticalHop then
             targetVel = Vector3.new(dir.X * currentSpeed, CONFIG.BossCriticalHopSpeed, dir.Z * currentSpeed)
         elseif isHopping then
             targetVel = Vector3.new(dir.X * currentSpeed, CONFIG.BossHopStep * 60, dir.Z * currentSpeed)
@@ -1923,7 +1981,8 @@ local function microStepMoveTo(targetPos, baseSpeed)
             targetVel = dir * currentSpeed
         end
 
-        currentVel = currentVel:Lerp(targetVel, 0.5)
+        local lerpAmount = State.AntiCorrection and CONFIG.SmoothAccel or 0.5
+        currentVel = currentVel:Lerp(targetVel, lerpAmount)
         vel.Velocity = currentVel
 
         local lookAt = Vector3.new(currentVel.X, 0, currentVel.Z)
@@ -1983,21 +2042,16 @@ task.spawn(function()
                 refreshBiomeRegions()
                 lastBiomeRefresh = tick()
             end
-
             if tick() - lastEggRefresh > CONFIG.EggScanInterval then
                 lastEggRefresh = tick()
                 local ok, result = pcall(findEggs)
-                if ok then
-                    cachedEggs = result
-                else
-                    warn("[LUXXY] findEggs error:", result)
-                    cachedEggs = {}
-                end
+                if ok then cachedEggs = result
+                else warn("[LUXXY] findEggs error:", result); cachedEggs = {} end
             end
 
             local eggs = cachedEggs
             if #eggs == 0 then
-                Footer.Text = "Mencari egg... (0 egg terdeteksi)"
+                Footer.Text = "Mencari egg... (0 egg)"
                 task.wait(0.3)
             else
                 local target
@@ -2018,9 +2072,7 @@ task.spawn(function()
                 else
                     for _, egg in ipairs(eggs) do
                         local pos = getEggPosition(egg)
-                        if isSelectedBiome(egg, pos) then
-                            target = egg; break
-                        end
+                        if isSelectedBiome(egg, pos) then target = egg; break end
                     end
                 end
 
@@ -2039,39 +2091,32 @@ task.spawn(function()
                             if not (State.StealEgg or State.StealBestEgg) then break end
                             local nowPos = getEggPosition(target)
                             if not nowPos then break end
-
                             local moveOk, moveErr = pcall(microStepMoveTo, nowPos, State.MoveSpeed)
                             if not moveOk then
                                 warn("[LUXXY] move error:", moveErr)
                                 Footer.Text = "⚠ Move error - cek F9"
-                                task.wait(1)
-                                break
+                                task.wait(1); break
                             end
                             if not (State.StealEgg or State.StealBestEgg) then break end
-
-                            -- Try grab: remote dulu, fallback prompt
                             pcall(tryGrabEgg, target)
                             task.wait(0.4)
-
                             local stillThere = target.Parent ~= nil and isEggObject(target)
                             if not stillThere then break end
-
                             retries = retries + 1
                             if retries <= CONFIG.EggRetryMax then
                                 local b2 = getEggBiome(target, getEggPosition(target)) or "?"
-                                Footer.Text = "➜ Egg jatuh di ["..b2.."]! Ambil ulang ("..retries.."/"..CONFIG.EggRetryMax..")"
+                                Footer.Text = "➜ Egg jatuh ["..b2.."]! Retry ("..retries.."/"..CONFIG.EggRetryMax..")"
                             end
                         end
 
                         if State.StealEgg or State.StealBestEgg then
                             local b, bd = findNearestBoss(CONFIG.BossDetectRange)
                             if b and bd < CONFIG.BossEscapeRange then
-                                Footer.Text = "🚨 Kabur dari boss dulu..."
-                                pcall(microStepMoveTo, getMyBase(), State.MoveSpeed)
+                                Footer.Text = "🚨 Kabur boss..."
                             else
                                 Footer.Text = "➜ Balik base"
-                                pcall(microStepMoveTo, getMyBase(), State.MoveSpeed)
                             end
+                            pcall(microStepMoveTo, getMyBase(), State.MoveSpeed)
                         end
                         task.wait(0.2)
                     end
@@ -2080,7 +2125,7 @@ task.spawn(function()
                     for b, v in pairs(State.SelectedBiomes) do if v then table.insert(biomeList, b) end end
                     local biomeStr = (not State.StealBestEgg and #biomeList > 0)
                         and (" ["..table.concat(biomeList, ",").."]") or ""
-                    Footer.Text = (State.StealBestEgg and "Cari best egg (semua biome)" or "Cari egg")
+                    Footer.Text = (State.StealBestEgg and "Cari best egg" or "Cari egg")
                         ..biomeStr.." ("..#eggs.." egg)"
                     task.wait(0.3)
                 end
@@ -2100,4 +2145,4 @@ end)
 
 selectTab("MAIN")
 notify("LUXXY", "v"..CONFIG.Version.." loaded 🌿")
-print("[LUXXY] Loaded • v"..CONFIG.Version.." • remote steal ready")
+print("[LUXXY] Loaded • v"..CONFIG.Version.." • anti-correction ready")
