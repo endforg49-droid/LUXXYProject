@@ -1,6 +1,6 @@
 --[[
     ╔══════════════════════════════════════════════════════╗
-    ║  LuxxyHub - AutoWalk (v9.3 - TOGGLE FIX)             ║
+    ║  LuxxyHub - AutoWalk (v9.5 - Trail Recording)        ║
     ╚══════════════════════════════════════════════════════╝
 ]]
 
@@ -16,7 +16,7 @@ local SoundService     = game:GetService("SoundService")
 local Debris           = game:GetService("Debris")
 local LocalPlayer      = Players.LocalPlayer
 
-local function log(msg) print("[LuxxyHub v9.3] " .. tostring(msg)) end
+local function log(msg) print("[LuxxyHub v9.5] " .. tostring(msg)) end
 log("Script started")
 
 -- ================================================================
@@ -73,6 +73,15 @@ local CONFIG = {
     JUMP_COOLDOWN   = 0.5,
     Y_JUMP_THRESHOLD = 1.5,
     REWIND_COOLDOWN = 2.0,
+    BG_IMAGE_ID      = "rbxassetid://125806010780793",
+    BG_IMAGE_TRANS   = 0.75,
+    BG_IMAGE_COLOR   = Color3.fromRGB(180, 140, 230),
+    -- ★ TRAIL CONFIG
+    TRAIL_LIFETIME   = 999,       -- lama trail terlihat (detik). 999 = tampilkan seluruh path
+    TRAIL_THICKNESS  = 0.8,       -- ketebalan garis (studs)
+    TRAIL_COLOR_1    = Color3.fromRGB(88, 30, 160),
+    TRAIL_COLOR_2    = Color3.fromRGB(255, 255, 255),
+    TRAIL_COLOR_3    = Color3.fromRGB(190, 145, 255),
     THEME = {
         BG_DARK      = Color3.fromRGB(10, 6, 18),
         BG_PANEL     = Color3.fromRGB(22, 14, 38),
@@ -115,6 +124,9 @@ local STATE = {
     controlsRef = nil,
     autoRewindEnabled = true,
     lastRewindTime = 0,
+    -- ★ trail
+    trail = nil,
+    trailAttachments = {},
 }
 
 -- ================================================================
@@ -208,6 +220,22 @@ local function applyGradientStroke(frame, thickness, cornerRadius)
     return stroke, grad
 end
 
+local function addBgImage(frame, cornerRadius)
+    cornerRadius = cornerRadius or 14
+    local bg = newInst("ImageLabel", {
+        Name = "BgImage",
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Image = CONFIG.BG_IMAGE_ID,
+        ImageTransparency = CONFIG.BG_IMAGE_TRANS,
+        ImageColor3 = CONFIG.BG_IMAGE_COLOR,
+        ScaleType = Enum.ScaleType.Crop,
+        ZIndex = frame.ZIndex or 1,
+    }, frame)
+    newInst("UICorner", { CornerRadius = UDim.new(0, cornerRadius) }, bg)
+    return bg
+end
+
 RunService.Heartbeat:Connect(function()
     local flow = ((os.clock() * 0.6) % 2) - 1
     for i = #activeGradients, 1, -1 do
@@ -275,16 +303,14 @@ local isMob = isMobile()
 local MAIN_W  = isMob and math.clamp(vps.X * 0.92, 300, 420) or math.clamp(vps.X * 0.42, 400, 520)
 local MAIN_H  = isMob and math.clamp(vps.Y * 0.72, 300, 380) or math.clamp(vps.Y * 0.68, 340, 420)
 local SIDEBAR_W = isMob and 78 or 96
-local MINI_W  = isMob and math.clamp(vps.X * 0.78, 240, 280) or 280
-local MINI_H  = 520
+local MINI_W  = math.clamp(vps.X * (isMob and 0.72 or 0.28), 240, 300)
+local MINI_H  = math.clamp(vps.Y - 80, 320, 520)
 
 -- ================================================================
--- ★ FLOAT BUTTON — KIRI ATAS, FIXED, SINGLE EVENT
+-- FLOAT BUTTON
 -- ================================================================
-log("Creating float button...")
-
-local FLOAT_BTN_X = 20     -- dari kiri layar (px)
-local FLOAT_BTN_Y = 140    -- dari atas layar (px) — ga terlalu atas
+local FLOAT_BTN_X = 20
+local FLOAT_BTN_Y = 140
 
 local floatBtn = newInst("ImageButton", {
     Name = "FloatBtn",
@@ -307,11 +333,8 @@ newInst("UIPadding", {
     PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8),
 }, floatBtn)
 
-log("Float button created at " .. FLOAT_BTN_X .. "," .. FLOAT_BTN_Y)
--- NOTE: TIDAK di-makeDraggable → tombol fixed
-
 -- ================================================================
--- MAIN FRAME (pakai AnchorPoint 0.5,0.5 supaya selalu center)
+-- MAIN FRAME
 -- ================================================================
 local mainFrame = newInst("Frame", {
     Name = "MainFrame",
@@ -322,12 +345,89 @@ local mainFrame = newInst("Frame", {
     BorderSizePixel = 0,
     Visible = false,
     ZIndex = 50,
+    ClipsDescendants = true,
 }, ScreenGui)
 newInst("UICorner", { CornerRadius = UDim.new(0, 14) }, mainFrame)
+addBgImage(mainFrame, 14)
 applyGradientStroke(mainFrame, 2, 14)
 
 -- ================================================================
--- ★★★ OPEN / CLOSE (DEBOUNCED — ANTI DOUBLE-FIRE) ★★★
+-- ★★★ TRAIL SYSTEM ★★★
+-- ================================================================
+local function destroyTrail()
+    if STATE.trail then
+        pcall(function() STATE.trail.Enabled = false end)
+        pcall(function() STATE.trail:Destroy() end)
+        STATE.trail = nil
+    end
+    for _, a in ipairs(STATE.trailAttachments) do
+        if a and a.Parent then
+            pcall(function() a:Destroy() end)
+        end
+    end
+    STATE.trailAttachments = {}
+end
+
+local function createTrail()
+    destroyTrail()
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local halfT = (CONFIG.TRAIL_THICKNESS or 0.8) / 2
+
+    local a0 = newInst("Attachment", {
+        Name = "LuxxyTrailA0",
+        Position = Vector3.new(0, halfT, 0),
+    }, root)
+
+    local a1 = newInst("Attachment", {
+        Name = "LuxxyTrailA1",
+        Position = Vector3.new(0, -halfT, 0),
+    }, root)
+
+    local trail = newInst("Trail", {
+        Name = "LuxxyTrail",
+        Attachment0 = a0,
+        Attachment1 = a1,
+        Lifetime = CONFIG.TRAIL_LIFETIME,
+        MinLength = 0,
+        FaceCamera = true,
+        LightEmission = 0.6,
+        LightInfluence = 0,
+        WidthScale = NumberSequence.new(1),
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0.00, CONFIG.TRAIL_COLOR_1),
+            ColorSequenceKeypoint.new(0.50, CONFIG.TRAIL_COLOR_2),
+            ColorSequenceKeypoint.new(1.00, CONFIG.TRAIL_COLOR_3),
+        }),
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0.0, 0.15),
+            NumberSequenceKeypoint.new(0.85, 0.4),
+            NumberSequenceKeypoint.new(1.0, 1.0),
+        }),
+        Enabled = true,
+    }, root)
+
+    STATE.trail = trail
+    STATE.trailAttachments = { a0, a1 }
+    log("Trail created")
+end
+
+-- ★ Helper: disable trail sementara saat teleport (supaya tidak ada garis nyambung)
+local function withTrailDisabled(fn)
+    local wasEnabled = STATE.trail and STATE.trail.Enabled
+    if STATE.trail then STATE.trail.Enabled = false end
+    task.spawn(function()
+        fn()
+        task.wait(0.15)
+        if STATE.trail and wasEnabled then
+            pcall(function() STATE.trail.Enabled = true end)
+        end
+    end)
+end
+
+-- ================================================================
+-- OPEN / CLOSE
 -- ================================================================
 local toggleLock = false
 
@@ -342,64 +442,41 @@ end
 local function openUI()
     if STATE.uiOpen then return end
     STATE.uiOpen = true
-    log(">>> openUI called")
-
     playClick()
     setFloatImage(true)
-
     mainFrame.Visible = true
     mainFrame.BackgroundTransparency = 1
     mainFrame.Size = UDim2.new(0, MAIN_W * 0.9, 0, MAIN_H * 0.9)
     mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-
     tween(mainFrame, 0.3, {
         Size = UDim2.new(0, MAIN_W, 0, MAIN_H),
         BackgroundTransparency = 0,
     }, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-
-    log(">>> mainFrame.Visible=" .. tostring(mainFrame.Visible)
-        .. " Size=" .. tostring(mainFrame.Size)
-        .. " Parent=" .. tostring(mainFrame.Parent and mainFrame.Parent.Name))
 end
 
 local function closeUI()
     if not STATE.uiOpen then return end
     STATE.uiOpen = false
-    log(">>> closeUI called")
-
     playClick()
     setFloatImage(false)
-
     local tw = tween(mainFrame, 0.22, {
         Size = UDim2.new(0, MAIN_W * 0.9, 0, MAIN_H * 0.9),
         BackgroundTransparency = 1,
     }, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
-    tw.Completed:Connect(function()
-        mainFrame.Visible = false
-    end)
+    tw.Completed:Connect(function() mainFrame.Visible = false end)
 end
 
--- Debounced toggle: mencegah multiple events dalam waktu singkat
 local function toggleUI()
-    if toggleLock then
-        log(">>> toggleUI SKIPPED (debounce)")
-        return
-    end
+    if toggleLock then return end
     toggleLock = true
     task.delay(0.35, function() toggleLock = false end)
-
-    log(">>> toggleUI (uiOpen=" .. tostring(STATE.uiOpen) .. ")")
     if STATE.uiOpen then closeUI() else openUI() end
 end
 
--- ★ HANYA satu event: Activated. Tidak ada fallback.
-floatBtn.Activated:Connect(function()
-    log(">>> FloatBtn.Activated fired")
-    toggleUI()
-end)
+floatBtn.Activated:Connect(toggleUI)
 
 -- ================================================================
--- MAIN FRAME UI (header, sidebar, dll)
+-- MAIN FRAME CONTENT
 -- ================================================================
 makeDraggable(mainFrame)
 
@@ -407,6 +484,7 @@ local headerH = 42
 local header = newInst("Frame", {
     Size = UDim2.new(1, 0, 0, headerH),
     BackgroundColor3 = T.BG_DARK,
+    BackgroundTransparency = 0.3,
     BorderSizePixel = 0,
     ZIndex = 51,
 }, mainFrame)
@@ -415,6 +493,7 @@ newInst("Frame", {
     Size = UDim2.new(1, 0, 0, 14),
     Position = UDim2.new(0, 0, 1, -14),
     BackgroundColor3 = T.BG_DARK,
+    BackgroundTransparency = 0.3,
     BorderSizePixel = 0,
     ZIndex = 51,
 }, header)
@@ -452,6 +531,7 @@ local sidebar = newInst("Frame", {
     Size = UDim2.new(0, SIDEBAR_W, 1, -headerH - 16),
     Position = UDim2.new(0, 8, 0, headerH + 4),
     BackgroundColor3 = T.BG_DARK,
+    BackgroundTransparency = 0.35,
     BorderSizePixel = 0,
     ZIndex = 51,
 }, mainFrame)
@@ -488,6 +568,7 @@ local content = newInst("Frame", {
     Size = UDim2.new(1, -contentX - 8, 1, -headerH - 16),
     Position = UDim2.new(0, contentX, 0, headerH + 4),
     BackgroundColor3 = T.BG_DARK,
+    BackgroundTransparency = 0.35,
     BorderSizePixel = 0,
     ZIndex = 51,
     ClipsDescendants = true,
@@ -567,7 +648,7 @@ local savedScroll = newInst("ScrollingFrame", {
     Size = UDim2.new(1, -20, 1, -154),
     Position = UDim2.new(0, 10, 0, 78),
     BackgroundColor3 = T.BG_ELEMENT,
-    BackgroundTransparency = 0.5,
+    BackgroundTransparency = 0.6,
     BorderSizePixel = 0,
     ScrollBarThickness = 4,
     ScrollBarImageColor3 = T.PURPLE,
@@ -584,7 +665,7 @@ local speedRow = newInst("Frame", {
     Size = UDim2.new(1, -20, 0, 60),
     Position = UDim2.new(0, 10, 1, -70),
     BackgroundColor3 = T.BG_ELEMENT,
-    BackgroundTransparency = 0.4,
+    BackgroundTransparency = 0.55,
     BorderSizePixel = 0,
     ZIndex = 53,
 }, pageMain)
@@ -647,7 +728,7 @@ newInst("TextLabel", {
     Size = UDim2.new(1, -20, 0, 26),
     Position = UDim2.new(0, 10, 0, 10),
     BackgroundTransparency = 1,
-    Text = "LuxxyHub  •  AutoWalk v9.3",
+    Text = "LuxxyHub  •  AutoWalk v9.5",
     TextColor3 = T.WHITE,
     TextSize = 16,
     Font = Enum.Font.GothamBold,
@@ -659,7 +740,7 @@ newInst("TextLabel", {
     Size = UDim2.new(1, -20, 1, -50),
     Position = UDim2.new(0, 10, 0, 42),
     BackgroundTransparency = 1,
-    Text = "📢 INFO v9.3\n\n• Tombol kiri-atas (fixed)\n• Debounce toggle (anti double)\n• Auto-Rewind teleport protection\n• Checkpoint + Combine\n\nKalau tombol tetap ga muncul UI,\nlihat console Delta untuk log\n[LuxxyHub v9.3]",
+    Text = "📢 INFO v9.5\n\n• ✨ Trail Recording: garis ungu\n  mengikuti pergerakanmu saat RECORD\n• Trail hanya muncul saat recording\n• BG image di UI panel\n• Auto-Rewind teleport protection\n• Checkpoint + Combine\n\nKlik tombol kiri-atas untuk\nbuka/tutup UI.",
     TextColor3 = T.TEXT_DIM,
     TextSize = 12,
     Font = Enum.Font.Gotham,
@@ -675,14 +756,16 @@ newInst("TextLabel", {
 local miniUI = newInst("Frame", {
     Name = "MiniRecord",
     Size = UDim2.new(0, MINI_W, 0, MINI_H),
-    Position = UDim2.new(1, -MINI_W - 16, 0.5, 0),
-    AnchorPoint = Vector2.new(0, 0.5),
+    Position = UDim2.new(1, -MINI_W/2 - 16, 0.5, 0),
+    AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundColor3 = T.BG_PANEL,
     BorderSizePixel = 0,
     Visible = false,
     ZIndex = 200,
+    ClipsDescendants = true,
 }, ScreenGui)
 newInst("UICorner", { CornerRadius = UDim.new(0, 12) }, miniUI)
+addBgImage(miniUI, 12)
 applyGradientStroke(miniUI, 2, 12)
 makeDraggable(miniUI)
 
@@ -690,6 +773,7 @@ local miniHeaderH = 32
 local miniHeader = newInst("Frame", {
     Size = UDim2.new(1, 0, 0, miniHeaderH),
     BackgroundColor3 = T.BG_DARK,
+    BackgroundTransparency = 0.3,
     BorderSizePixel = 0,
     ZIndex = 201,
 }, miniUI)
@@ -698,6 +782,7 @@ newInst("Frame", {
     Size = UDim2.new(1, 0, 0, 12),
     Position = UDim2.new(0, 0, 1, -12),
     BackgroundColor3 = T.BG_DARK,
+    BackgroundTransparency = 0.3,
     BorderSizePixel = 0,
     ZIndex = 201,
 }, miniHeader)
@@ -744,12 +829,16 @@ local miniCloseBtn = newInst("TextButton", {
 }, miniHeader)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, miniCloseBtn)
 
-local miniBody = newInst("Frame", {
+local miniBody = newInst("ScrollingFrame", {
     Size = UDim2.new(1, 0, 1, -miniHeaderH),
     Position = UDim2.new(0, 0, 0, miniHeaderH),
     BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 3,
+    ScrollBarImageColor3 = T.PURPLE,
+    CanvasSize = UDim2.new(0, 0, 0, 0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
     ZIndex = 201,
-    ClipsDescendants = true,
 }, miniUI)
 newInst("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, miniBody)
 newInst("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, miniBody)
@@ -798,6 +887,50 @@ local arKnob = newInst("Frame", {
 }, arToggle)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, arKnob)
 
+-- TRAIL TOGGLE
+local trailRow = newInst("Frame", {
+    Size = UDim2.new(1, 0, 0, 34),
+    BackgroundColor3 = T.BG_ELEMENT,
+    BorderSizePixel = 0,
+    ZIndex = 202,
+}, miniBody)
+trailRow.LayoutOrder = 2
+newInst("UICorner", { CornerRadius = UDim.new(0, 8) }, trailRow)
+applyGradientStroke(trailRow, 1, 8)
+
+newInst("TextLabel", {
+    Size = UDim2.new(1, -70, 1, 0),
+    Position = UDim2.new(0, 12, 0, 0),
+    BackgroundTransparency = 1,
+    Text = "✨ SHOW TRAIL",
+    TextColor3 = T.PURPLE_LIGHT,
+    TextSize = 11,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 203,
+}, trailRow)
+
+local trailToggle = newInst("TextButton", {
+    Size = UDim2.new(0, 48, 0, 24),
+    Position = UDim2.new(1, -56, 0.5, -12),
+    BackgroundColor3 = T.PURPLE,
+    BorderSizePixel = 0,
+    Text = "",
+    AutoButtonColor = false,
+    Active = true,
+    ZIndex = 204,
+}, trailRow)
+newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, trailToggle)
+
+local trailKnob = newInst("Frame", {
+    Size = UDim2.new(0, 18, 0, 18),
+    Position = UDim2.new(1, -21, 0.5, -9),
+    BackgroundColor3 = T.WHITE,
+    BorderSizePixel = 0,
+    ZIndex = 205,
+}, trailToggle)
+newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, trailKnob)
+
 -- RECORD
 local recRow = newInst("Frame", {
     Size = UDim2.new(1, 0, 0, 34),
@@ -805,7 +938,7 @@ local recRow = newInst("Frame", {
     BorderSizePixel = 0,
     ZIndex = 202,
 }, miniBody)
-recRow.LayoutOrder = 2
+recRow.LayoutOrder = 3
 newInst("UICorner", { CornerRadius = UDim.new(0, 8) }, recRow)
 
 newInst("TextLabel", {
@@ -851,7 +984,7 @@ local statsLabel = newInst("TextLabel", {
     TextXAlignment = Enum.TextXAlignment.Left,
     ZIndex = 202,
 }, miniBody)
-statsLabel.LayoutOrder = 3
+statsLabel.LayoutOrder = 4
 
 local backBtn = newInst("TextButton", {
     Size = UDim2.new(1, 0, 0, 30),
@@ -865,7 +998,7 @@ local backBtn = newInst("TextButton", {
     Active = true,
     ZIndex = 202,
 }, miniBody)
-backBtn.LayoutOrder = 4
+backBtn.LayoutOrder = 5
 newInst("UICorner", { CornerRadius = UDim.new(0, 8) }, backBtn)
 applyGradientStroke(backBtn, 1, 8)
 
@@ -874,7 +1007,7 @@ local cpSection = newInst("Frame", {
     BackgroundTransparency = 1,
     ZIndex = 202,
 }, miniBody)
-cpSection.LayoutOrder = 5
+cpSection.LayoutOrder = 6
 
 newInst("TextLabel", {
     Size = UDim2.new(0.6, 0, 1, 0),
@@ -902,7 +1035,7 @@ local cpCountLabel = newInst("TextLabel", {
 local cpScroll = newInst("ScrollingFrame", {
     Size = UDim2.new(1, 0, 0, 80),
     BackgroundColor3 = T.BG_DARK,
-    BackgroundTransparency = 0.4,
+    BackgroundTransparency = 0.5,
     BorderSizePixel = 0,
     ScrollBarThickness = 3,
     ScrollBarImageColor3 = T.PURPLE,
@@ -910,7 +1043,7 @@ local cpScroll = newInst("ScrollingFrame", {
     AutomaticCanvasSize = Enum.AutomaticSize.Y,
     ZIndex = 202,
 }, miniBody)
-cpScroll.LayoutOrder = 6
+cpScroll.LayoutOrder = 7
 newInst("UICorner", { CornerRadius = UDim.new(0, 6) }, cpScroll)
 applyGradientStroke(cpScroll, 1, 6)
 newInst("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, cpScroll)
@@ -921,7 +1054,7 @@ local cpActionRow = newInst("Frame", {
     BackgroundTransparency = 1,
     ZIndex = 202,
 }, miniBody)
-cpActionRow.LayoutOrder = 7
+cpActionRow.LayoutOrder = 8
 
 local setCpBtn = newInst("TextButton", {
     Size = UDim2.new(0.49, 0, 1, 0),
@@ -959,7 +1092,7 @@ local saveClearRow = newInst("Frame", {
     BackgroundTransparency = 1,
     ZIndex = 202,
 }, miniBody)
-saveClearRow.LayoutOrder = 8
+saveClearRow.LayoutOrder = 9
 
 local saveWalkBtn = newInst("TextButton", {
     Size = UDim2.new(0.49, 0, 1, 0),
@@ -1006,7 +1139,7 @@ local nameInput = newInst("TextBox", {
     Visible = false,
     ZIndex = 203,
 }, miniBody)
-nameInput.LayoutOrder = 9
+nameInput.LayoutOrder = 10
 newInst("UICorner", { CornerRadius = UDim.new(0, 6) }, nameInput)
 applyGradientStroke(nameInput, 1, 6)
 
@@ -1023,7 +1156,7 @@ local confirmSaveBtn = newInst("TextButton", {
     Active = true,
     ZIndex = 203,
 }, miniBody)
-confirmSaveBtn.LayoutOrder = 10
+confirmSaveBtn.LayoutOrder = 11
 newInst("UICorner", { CornerRadius = UDim.new(0, 6) }, confirmSaveBtn)
 applyGradientStroke(confirmSaveBtn, 1, 6)
 
@@ -1115,10 +1248,15 @@ local function doRewind(reason)
         notify("⚠ Tidak ada riwayat untuk rewind", T.RED)
         rewindBusy = false; return
     end
+    -- ★ Disable trail sementara supaya tidak ada garis nyambung
+    if STATE.trail then STATE.trail.Enabled = false end
     root.CFrame = CFrame.new(target.pos + Vector3.new(0, 2, 0)) * CFrame.Angles(0, target.rot, 0)
     pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
     STATE.history = { { t = tick(), pos = target.pos, rot = target.rot } }
     notify("🛡 " .. (reason or "Auto-Rewind"), T.CYAN)
+    task.delay(0.15, function()
+        if STATE.trail then pcall(function() STATE.trail.Enabled = true end) end
+    end)
     task.delay(0.8, function() rewindBusy = false end)
 end
 
@@ -1162,13 +1300,42 @@ end)
 updateARToggleVisual()
 
 -- ================================================================
--- RECORD
+-- ★ TRAIL TOGGLE (default ON)
+-- ================================================================
+STATE.trailEnabled = true
+
+local function updateTrailToggleVisual()
+    if STATE.trailEnabled then
+        tween(trailKnob, 0.2, { Position = UDim2.new(1, -21, 0.5, -9) })
+        tween(trailToggle, 0.2, { BackgroundColor3 = T.PURPLE })
+    else
+        tween(trailKnob, 0.2, { Position = UDim2.new(0, 3, 0.5, -9) })
+        tween(trailToggle, 0.2, { BackgroundColor3 = T.BG_ELEMENT2 })
+    end
+end
+trailToggle.Activated:Connect(function()
+    playClick()
+    STATE.trailEnabled = not STATE.trailEnabled
+    updateTrailToggleVisual()
+    notify(STATE.trailEnabled and "✨ Trail ON" or "✨ Trail OFF",
+           STATE.trailEnabled and T.PURPLE_LIGHT or T.TEXT_DIM)
+end)
+updateTrailToggleVisual()
+
+-- ================================================================
+-- RECORD (★ Trail di-attach saat start, destroy saat stop)
 -- ================================================================
 local function startRecording()
     if STATE.recording.active then return end
     STATE.recording.active = true
     STATE.recording.points = {}
     STATE.recording.startTime = tick()
+
+    -- ★ Buat trail kalau toggle ON
+    if STATE.trailEnabled then
+        createTrail()
+    end
+
     STATE.recording.conn = RunService.Heartbeat:Connect(function()
         if not STATE.recording.active then return end
         local root, hum = getRoot(), getHum()
@@ -1201,6 +1368,18 @@ local function stopRecording()
     STATE.recording.active = false
     if STATE.recording.conn then STATE.recording.conn:Disconnect(); STATE.recording.conn = nil end
     STATE.currentRecording = STATE.recording.points
+
+    -- ★ Hapus trail (fade dulu baru destroy)
+    task.spawn(function()
+        if STATE.trail then
+            pcall(function()
+                tween(STATE.trail, 1.2, { Transparency = NumberSequence.new(1) })
+            end)
+            task.wait(1.3)
+        end
+        destroyTrail()
+    end)
+
     notify("⏹ Recording dihentikan (" .. #STATE.recording.points .. " titik)", T.TEXT)
 end
 
@@ -1244,6 +1423,8 @@ local function stopPlayback()
     local h = getHum()
     if h then h:Move(Vector3.zero, false); h.AutoRotate = true end
     enableControls()
+    -- ★ Tidak ada trail di playback, tapi kalau ada sisa, hapus
+    destroyTrail()
 end
 
 local function playWalk(points, id)
@@ -1255,6 +1436,9 @@ local function playWalk(points, id)
     if not root or not hum then notify("❌ Humanoid tidak ditemukan", T.RED); return end
 
     stopPlayback()
+    -- ★ Pastikan trail tidak ada saat playback
+    destroyTrail()
+
     local first = points[1]
     if (root.Position - first.pos).Magnitude > CONFIG.TELEPORT_THRESHOLD then
         root.CFrame = CFrame.new(first.pos + Vector3.new(0, 3, 0)) * CFrame.Angles(0, first.rot, 0)
@@ -1339,8 +1523,13 @@ backBtn.Activated:Connect(function()
     if not target then notify("❌ Riwayat belum cukup", T.RED); return end
     local root = getRoot()
     if not root then return end
+    -- ★ Disable trail sementara
+    if STATE.trail then STATE.trail.Enabled = false end
     root.CFrame = CFrame.new(target.pos) * CFrame.Angles(0, target.rot, 0)
     notify("⏪ Kembali 2 detik", T.PURPLE_LIGHT)
+    task.delay(0.15, function()
+        if STATE.trail then pcall(function() STATE.trail.Enabled = true end) end
+    end)
     local hum = getHum()
     if hum then
         hum.WalkSpeed = 0
@@ -1353,6 +1542,7 @@ clearWalkBtn.Activated:Connect(function()
     STATE.recording.points = {}
     STATE.currentRecording = {}
     statsLabel.Text = "0.0 studs  •  0.00 s  •  0 pts"
+    destroyTrail()
     notify("🗑 Recording dibersihkan", T.RED)
 end)
 
@@ -1390,7 +1580,7 @@ local function saveConfig(silent)
         for _, p in ipairs(w.points or {}) do table.insert(pts, compressPoint(p)) end
         table.insert(walksData, { n = w.name, pts = pts })
     end
-    local data = { walks = walksData, speed = STATE.autoWalkSpeed, autoRewind = STATE.autoRewindEnabled }
+    local data = { walks = walksData, speed = STATE.autoWalkSpeed, autoRewind = STATE.autoRewindEnabled, trailEnabled = STATE.trailEnabled }
     pcall(function()
         if typeof(writefile) == "function" then
             writefile(CONFIG.FILE_NAME, HttpService:JSONEncode(data))
@@ -1434,6 +1624,10 @@ local function loadConfig()
     if data.autoRewind ~= nil then
         STATE.autoRewindEnabled = data.autoRewind
         updateARToggleVisual()
+    end
+    if data.trailEnabled ~= nil then
+        STATE.trailEnabled = data.trailEnabled
+        updateTrailToggleVisual()
     end
 end
 
@@ -1563,6 +1757,8 @@ setCpBtn.Activated:Connect(function()
     STATE.recording.points = {}
     STATE.currentRecording = {}
     statsLabel.Text = "0.0 studs  •  0.00 s  •  0 pts"
+    -- ★ Trail dihapus karena reset recording
+    destroyTrail()
     if recToggleState then
         recToggleState = false
         tween(recKnob, 0.2, { Position = UDim2.new(0, 3, 0.5, -9) })
@@ -1735,6 +1931,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     STATE.history = {}
     lastPos = nil
     stopPlayback()
+    destroyTrail()   -- ★ pastikan trail bersih saat respawn
     task.wait(1)
     refreshSavedList()
 end)
@@ -1743,13 +1940,14 @@ ScreenGui.AncestryChanged:Connect(function()
     if not ScreenGui.Parent then
         stopPlayback()
         enableControls()
+        destroyTrail()
         if STATE.recording.conn then STATE.recording.conn:Disconnect() end
         if steppedConn then steppedConn:Disconnect() end
     end
 end)
 
 task.delay(0.6, function()
-    notify("✨ LuxxyHub AutoWalk v9.3 dimuat", T.PURPLE_LIGHT)
+    notify("✨ LuxxyHub AutoWalk v9.5 dimuat", T.PURPLE_LIGHT)
 end)
 
 log("Script loaded successfully")
