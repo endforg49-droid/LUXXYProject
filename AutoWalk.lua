@@ -1,6 +1,6 @@
 --[[
     ╔══════════════════════════════════════════════════════╗
-    ║  LuxxyHub - AutoWalk (v9.2 - Mobile Click FIX)       ║
+    ║  LuxxyHub - AutoWalk (v9.3 - TOGGLE FIX)             ║
     ╚══════════════════════════════════════════════════════╝
 ]]
 
@@ -16,7 +16,7 @@ local SoundService     = game:GetService("SoundService")
 local Debris           = game:GetService("Debris")
 local LocalPlayer      = Players.LocalPlayer
 
-local function log(msg) print("[LuxxyHub v9.2] " .. tostring(msg)) end
+local function log(msg) print("[LuxxyHub v9.3] " .. tostring(msg)) end
 log("Script started")
 
 -- ================================================================
@@ -43,7 +43,6 @@ end
 local parentGui = tryGetGui()
 if not parentGui then warn("[LuxxyHub] No parent GUI"); return end
 
--- Cleanup old instances
 local function cleanupIn(gui)
     if not gui then return end
     pcall(function()
@@ -151,7 +150,6 @@ local function isMobile()
     return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 end
 
--- ★ FIX: draggable HANYA untuk UI, bukan tombol
 local function makeDraggable(frame, handle)
     handle = handle or frame
     local dragging, dragStart, startPos = false, nil, nil
@@ -281,30 +279,26 @@ local MINI_W  = isMob and math.clamp(vps.X * 0.78, 240, 280) or 280
 local MINI_H  = 520
 
 -- ================================================================
--- ★★★ FLOAT BUTTON — FIXED POSITION, NO DRAG, MOBILE CLICK ★★★
+-- ★ FLOAT BUTTON — KIRI ATAS, FIXED, SINGLE EVENT
 -- ================================================================
 log("Creating float button...")
 
-local FLOAT_BTN_SIZE = 54
-local FLOAT_BTN_X = 245   -- posisi X (dari kiri layar)
-local FLOAT_BTN_Y = 250   -- posisi Y (dari atas layar)
+local FLOAT_BTN_X = 20     -- dari kiri layar (px)
+local FLOAT_BTN_Y = 140    -- dari atas layar (px) — ga terlalu atas
 
 local floatBtn = newInst("ImageButton", {
     Name = "FloatBtn",
-    Size = UDim2.new(0, FLOAT_BTN_SIZE, 0, FLOAT_BTN_SIZE),
+    Size = UDim2.new(0, 54, 0, 54),
     Position = UDim2.new(0, FLOAT_BTN_X, 0, FLOAT_BTN_Y),
-    AnchorPoint = Vector2.new(0.5, 0.5),
+    AnchorPoint = Vector2.new(0, 0),
     BackgroundColor3 = T.BG_PANEL,
-    BackgroundTransparency = 0,
     BorderSizePixel = 0,
     Image = CONFIG.IMG_OPEN,
     ImageColor3 = Color3.new(1, 1, 1),
     ScaleType = Enum.ScaleType.Fit,
     ZIndex = 100,
-    Active = true,          -- wajib true untuk terima input
-    Selectable = true,
+    Active = true,
     AutoButtonColor = false,
-    Visible = true,
 }, ScreenGui)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, floatBtn)
 applyGradientStroke(floatBtn, 2, 30)
@@ -313,17 +307,17 @@ newInst("UIPadding", {
     PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8),
 }, floatBtn)
 
--- ★ FIX: TIDAK ada makeDraggable(floatBtn) — tombol fixed!
-
 log("Float button created at " .. FLOAT_BTN_X .. "," .. FLOAT_BTN_Y)
+-- NOTE: TIDAK di-makeDraggable → tombol fixed
 
 -- ================================================================
--- MAIN FRAME
+-- MAIN FRAME (pakai AnchorPoint 0.5,0.5 supaya selalu center)
 -- ================================================================
 local mainFrame = newInst("Frame", {
     Name = "MainFrame",
     Size = UDim2.new(0, MAIN_W, 0, MAIN_H),
-    Position = UDim2.new(0.5, -MAIN_W / 2, 0.5, -MAIN_H / 2),
+    Position = UDim2.new(0.5, 0, 0.5, 0),
+    AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundColor3 = T.BG_PANEL,
     BorderSizePixel = 0,
     Visible = false,
@@ -331,7 +325,83 @@ local mainFrame = newInst("Frame", {
 }, ScreenGui)
 newInst("UICorner", { CornerRadius = UDim.new(0, 14) }, mainFrame)
 applyGradientStroke(mainFrame, 2, 14)
-makeDraggable(mainFrame)  -- ★ UI panel BOLEH di-drag
+
+-- ================================================================
+-- ★★★ OPEN / CLOSE (DEBOUNCED — ANTI DOUBLE-FIRE) ★★★
+-- ================================================================
+local toggleLock = false
+
+local function setFloatImage(active)
+    tween(floatBtn, 0.15, { ImageTransparency = 1 })
+    task.delay(0.15, function()
+        floatBtn.Image = active and CONFIG.IMG_ACTIVE or CONFIG.IMG_OPEN
+        tween(floatBtn, 0.15, { ImageTransparency = 0 })
+    end)
+end
+
+local function openUI()
+    if STATE.uiOpen then return end
+    STATE.uiOpen = true
+    log(">>> openUI called")
+
+    playClick()
+    setFloatImage(true)
+
+    mainFrame.Visible = true
+    mainFrame.BackgroundTransparency = 1
+    mainFrame.Size = UDim2.new(0, MAIN_W * 0.9, 0, MAIN_H * 0.9)
+    mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+
+    tween(mainFrame, 0.3, {
+        Size = UDim2.new(0, MAIN_W, 0, MAIN_H),
+        BackgroundTransparency = 0,
+    }, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+    log(">>> mainFrame.Visible=" .. tostring(mainFrame.Visible)
+        .. " Size=" .. tostring(mainFrame.Size)
+        .. " Parent=" .. tostring(mainFrame.Parent and mainFrame.Parent.Name))
+end
+
+local function closeUI()
+    if not STATE.uiOpen then return end
+    STATE.uiOpen = false
+    log(">>> closeUI called")
+
+    playClick()
+    setFloatImage(false)
+
+    local tw = tween(mainFrame, 0.22, {
+        Size = UDim2.new(0, MAIN_W * 0.9, 0, MAIN_H * 0.9),
+        BackgroundTransparency = 1,
+    }, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
+    tw.Completed:Connect(function()
+        mainFrame.Visible = false
+    end)
+end
+
+-- Debounced toggle: mencegah multiple events dalam waktu singkat
+local function toggleUI()
+    if toggleLock then
+        log(">>> toggleUI SKIPPED (debounce)")
+        return
+    end
+    toggleLock = true
+    task.delay(0.35, function() toggleLock = false end)
+
+    log(">>> toggleUI (uiOpen=" .. tostring(STATE.uiOpen) .. ")")
+    if STATE.uiOpen then closeUI() else openUI() end
+end
+
+-- ★ HANYA satu event: Activated. Tidak ada fallback.
+floatBtn.Activated:Connect(function()
+    log(">>> FloatBtn.Activated fired")
+    toggleUI()
+end)
+
+-- ================================================================
+-- MAIN FRAME UI (header, sidebar, dll)
+-- ================================================================
+makeDraggable(mainFrame)
 
 local headerH = 42
 local header = newInst("Frame", {
@@ -375,6 +445,7 @@ local closeMainBtn = newInst("TextButton", {
     ZIndex = 52,
 }, header)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, closeMainBtn)
+closeMainBtn.Activated:Connect(closeUI)
 
 -- SIDEBAR
 local sidebar = newInst("Frame", {
@@ -429,7 +500,6 @@ local pageMain = newInst("Frame", {
     Visible = true,
     ZIndex = 52,
 }, content)
-
 local pageInfo = newInst("Frame", {
     Size = UDim2.new(1, 0, 1, 0),
     BackgroundTransparency = 1,
@@ -482,7 +552,6 @@ local savedHeader = newInst("Frame", {
     BackgroundTransparency = 1,
     ZIndex = 53,
 }, pageMain)
-
 newInst("TextLabel", {
     Size = UDim2.new(1, 0, 1, 0),
     BackgroundTransparency = 1,
@@ -578,7 +647,7 @@ newInst("TextLabel", {
     Size = UDim2.new(1, -20, 0, 26),
     Position = UDim2.new(0, 10, 0, 10),
     BackgroundTransparency = 1,
-    Text = "LuxxyHub  •  AutoWalk v9.2",
+    Text = "LuxxyHub  •  AutoWalk v9.3",
     TextColor3 = T.WHITE,
     TextSize = 16,
     Font = Enum.Font.GothamBold,
@@ -590,7 +659,7 @@ newInst("TextLabel", {
     Size = UDim2.new(1, -20, 1, -50),
     Position = UDim2.new(0, 10, 0, 42),
     BackgroundTransparency = 1,
-    Text = "📢 INFO\n\nv9.2\n• Tombol fixed (tidak bisa di-drag)\n• Support mobile click\n• Auto-Rewind saat teleport part\n• Checkpoint system\n\n🛡 AUTO-REWIND: kalau ke-teleport part\ninvisible, otomatis balik ke posisi 2s lalu.",
+    Text = "📢 INFO v9.3\n\n• Tombol kiri-atas (fixed)\n• Debounce toggle (anti double)\n• Auto-Rewind teleport protection\n• Checkpoint + Combine\n\nKalau tombol tetap ga muncul UI,\nlihat console Delta untuk log\n[LuxxyHub v9.3]",
     TextColor3 = T.TEXT_DIM,
     TextSize = 12,
     Font = Enum.Font.Gotham,
@@ -606,7 +675,8 @@ newInst("TextLabel", {
 local miniUI = newInst("Frame", {
     Name = "MiniRecord",
     Size = UDim2.new(0, MINI_W, 0, MINI_H),
-    Position = UDim2.new(1, -MINI_W - 16, 0.5, -MINI_H / 2),
+    Position = UDim2.new(1, -MINI_W - 16, 0.5, 0),
+    AnchorPoint = Vector2.new(0, 0.5),
     BackgroundColor3 = T.BG_PANEL,
     BorderSizePixel = 0,
     Visible = false,
@@ -614,7 +684,7 @@ local miniUI = newInst("Frame", {
 }, ScreenGui)
 newInst("UICorner", { CornerRadius = UDim.new(0, 12) }, miniUI)
 applyGradientStroke(miniUI, 2, 12)
-makeDraggable(miniUI)  -- ★ mini UI boleh di-drag
+makeDraggable(miniUI)
 
 local miniHeaderH = 32
 local miniHeader = newInst("Frame", {
@@ -684,7 +754,7 @@ local miniBody = newInst("Frame", {
 newInst("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, miniBody)
 newInst("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, miniBody)
 
--- AUTO REWIND row
+-- AUTO REWIND
 local arRow = newInst("Frame", {
     Size = UDim2.new(1, 0, 0, 34),
     BackgroundColor3 = T.BG_ELEMENT,
@@ -728,7 +798,7 @@ local arKnob = newInst("Frame", {
 }, arToggle)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, arKnob)
 
--- RECORD row
+-- RECORD
 local recRow = newInst("Frame", {
     Size = UDim2.new(1, 0, 0, 34),
     BackgroundColor3 = T.BG_ELEMENT,
@@ -971,99 +1041,7 @@ local countdownLabel = newInst("TextLabel", {
 newInst("UICorner", { CornerRadius = UDim.new(0, 12) }, countdownLabel)
 
 -- ================================================================
--- ★★★ OPEN / CLOSE (MOBILE-FRIENDLY) ★★★
--- ================================================================
-local function setFloatImage(active)
-    tween(floatBtn, 0.15, { ImageTransparency = 1 })
-    task.delay(0.15, function()
-        floatBtn.Image = active and CONFIG.IMG_ACTIVE or CONFIG.IMG_OPEN
-        tween(floatBtn, 0.15, { ImageTransparency = 0 })
-    end)
-end
-
-local function openUI()
-    if STATE.uiOpen then return end
-    STATE.uiOpen = true
-    playClick()
-    setFloatImage(true)
-    mainFrame.Visible = true
-    mainFrame.Size = UDim2.new(0, MAIN_W * 0.9, 0, MAIN_H * 0.9)
-    mainFrame.BackgroundTransparency = 1
-    mainFrame.Position = UDim2.new(0.5, -MAIN_W / 2, 0.5, -MAIN_H / 2)
-    tween(mainFrame, 0.3, {
-        Size = UDim2.new(0, MAIN_W, 0, MAIN_H),
-        BackgroundTransparency = 0,
-    }, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-    log("UI opened")
-end
-
-local function closeUI()
-    if not STATE.uiOpen then return end
-    STATE.uiOpen = false
-    playClick()
-    setFloatImage(false)
-    local tw = tween(mainFrame, 0.22, {
-        Size = UDim2.new(0, MAIN_W * 0.9, 0, MAIN_H * 0.9),
-        BackgroundTransparency = 1,
-    }, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
-    tw.Completed:Connect(function()
-        mainFrame.Visible = false
-    end)
-    log("UI closed")
-end
-
-local function toggleUI()
-    if STATE.uiOpen then closeUI() else openUI() end
-end
-
--- ★ FIX: pakai Activated (works di mobile & PC)
-floatBtn.Activated:Connect(function()
-    log("Float button Activated fired")
-    toggleUI()
-end)
-
--- Fallback untuk beberapa versi Delta
-pcall(function()
-    floatBtn.MouseButton1Click:Connect(function()
-        log("Float button MouseButton1Click fired")
-        toggleUI()
-    end)
-end)
-
--- Fallback TouchTap
-pcall(function()
-    floatBtn.TouchTap:Connect(function()
-        log("Float button TouchTap fired")
-        toggleUI()
-    end)
-end)
-
--- Fallback manual via InputBegan + InputEnded (debounce)
-local touchStartPos = nil
-floatBtn.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch
-    or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        touchStartPos = input.Position
-    end
-end)
-floatBtn.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch
-    or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        if touchStartPos then
-            local delta = (input.Position - touchStartPos).Magnitude
-            if delta < 10 then
-                log("Float button InputEnded (tap) fired")
-                toggleUI()
-            end
-        end
-        touchStartPos = nil
-    end
-end)
-
-closeMainBtn.Activated:Connect(closeUI)
-
--- ================================================================
--- SIDEBAR
+-- SIDEBAR SWITCH
 -- ================================================================
 local function switchPage(id)
     STATE.currentPage = id
@@ -1073,7 +1051,6 @@ local function switchPage(id)
     tween(btnInfo, 0.15, { BackgroundColor3 = (id == "INFO") and T.PURPLE_DARK or T.BG_ELEMENT })
 end
 switchPage("MAIN")
-
 btnMain.Activated:Connect(function() playClick(); switchPage("MAIN") end)
 btnInfo.Activated:Connect(function() playClick(); switchPage("INFO") end)
 
@@ -1090,21 +1067,14 @@ local function getControls()
         local mod = require(pm)
         return mod:GetControls()
     end)
-    if ok and controls then
-        STATE.controlsRef = controls
-        return controls
-    end
+    if ok and controls then STATE.controlsRef = controls; return controls end
     return nil
 end
-
 local function disableControls()
-    local c = getControls()
-    if c then pcall(function() c:Disable() end) end
+    local c = getControls(); if c then pcall(function() c:Disable() end) end
 end
-
 local function enableControls()
-    local c = getControls()
-    if c then pcall(function() c:Enable() end) end
+    local c = getControls(); if c then pcall(function() c:Enable() end) end
 end
 
 -- ================================================================
@@ -1112,14 +1082,11 @@ end
 -- ================================================================
 local function getChar() return LocalPlayer.Character end
 local function getRoot()
-    local c = getChar()
-    return c and c:FindFirstChild("HumanoidRootPart")
+    local c = getChar(); return c and c:FindFirstChild("HumanoidRootPart")
 end
 local function getHum()
-    local c = getChar()
-    return c and c:FindFirstChildOfClass("Humanoid")
+    local c = getChar(); return c and c:FindFirstChildOfClass("Humanoid")
 end
-
 local function normalizeState(s)
     if not s then return "Running" end
     return tostring(s):gsub("Enum%.HumanoidStateType%.", "")
@@ -1129,16 +1096,11 @@ end
 -- AUTO-REWIND
 -- ================================================================
 local rewindBusy = false
-
 local function findHistoryAt(targetT)
-    local best = nil
     for i = #STATE.history, 1, -1 do
-        if STATE.history[i].t <= targetT then
-            best = STATE.history[i]
-            break
-        end
+        if STATE.history[i].t <= targetT then return STATE.history[i] end
     end
-    return best
+    return nil
 end
 
 local function doRewind(reason)
@@ -1146,46 +1108,32 @@ local function doRewind(reason)
     if (tick() - STATE.lastRewindTime) < CONFIG.REWIND_COOLDOWN then return end
     rewindBusy = true
     STATE.lastRewindTime = tick()
-
     local root = getRoot()
-    if not root then rewindBusy = false return end
-
-    local targetT = tick() - CONFIG.BACK_SECONDS
-    local target = findHistoryAt(targetT)
+    if not root then rewindBusy = false; return end
+    local target = findHistoryAt(tick() - CONFIG.BACK_SECONDS)
     if not target then
         notify("⚠ Tidak ada riwayat untuk rewind", T.RED)
-        rewindBusy = false
-        return
+        rewindBusy = false; return
     end
-
     root.CFrame = CFrame.new(target.pos + Vector3.new(0, 2, 0)) * CFrame.Angles(0, target.rot, 0)
     pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
-
     STATE.history = { { t = tick(), pos = target.pos, rot = target.rot } }
     notify("🛡 " .. (reason or "Auto-Rewind"), T.CYAN)
-
     task.delay(0.8, function() rewindBusy = false end)
 end
 
 local lastPos = nil
 local steppedConn = RunService.Stepped:Connect(function()
-    if not STATE.autoRewindEnabled then
-        lastPos = nil
-        return
-    end
-    if STATE.playing.active or rewindBusy then
-        lastPos = nil
-        return
+    if not STATE.autoRewindEnabled or STATE.playing.active or rewindBusy then
+        lastPos = nil; return
     end
     local root = getRoot()
-    if not root then lastPos = nil return end
-
+    if not root then lastPos = nil; return end
     local curPos = root.Position
     table.insert(STATE.history, { t = tick(), pos = curPos, rot = 0 })
     while #STATE.history > 0 and tick() - STATE.history[1].t > CONFIG.HISTORY_BUFFER do
         table.remove(STATE.history, 1)
     end
-
     if lastPos then
         local delta = (curPos - lastPos).Magnitude
         if delta > CONFIG.TELEPORT_JUMP_DETECT then
@@ -1204,7 +1152,6 @@ local function updateARToggleVisual()
         tween(arToggle, 0.2, { BackgroundColor3 = T.BG_ELEMENT2 })
     end
 end
-
 arToggle.Activated:Connect(function()
     playClick()
     STATE.autoRewindEnabled = not STATE.autoRewindEnabled
@@ -1222,7 +1169,6 @@ local function startRecording()
     STATE.recording.active = true
     STATE.recording.points = {}
     STATE.recording.startTime = tick()
-
     STATE.recording.conn = RunService.Heartbeat:Connect(function()
         if not STATE.recording.active then return end
         local root, hum = getRoot(), getHum()
@@ -1230,20 +1176,13 @@ local function startRecording()
         local now = tick() - STATE.recording.startTime
         local last = STATE.recording.points[#STATE.recording.points]
         if last and (now - last.time) < CONFIG.RECORD_INTERVAL then return end
-
         local _, yRot = root.CFrame:ToOrientation()
         local st = hum:GetState()
         local stName = "Running"
-        if st == Enum.HumanoidStateType.Jumping or hum.Jump then
-            stName = "Jumping"
-        elseif st == Enum.HumanoidStateType.Freefall then
-            stName = "Freefall"
-        elseif st == Enum.HumanoidStateType.Climbing then
-            stName = "Climbing"
-        elseif st == Enum.HumanoidStateType.Swimming then
-            stName = "Swimming"
-        end
-
+        if st == Enum.HumanoidStateType.Jumping or hum.Jump then stName = "Jumping"
+        elseif st == Enum.HumanoidStateType.Freefall then stName = "Freefall"
+        elseif st == Enum.HumanoidStateType.Climbing then stName = "Climbing"
+        elseif st == Enum.HumanoidStateType.Swimming then stName = "Swimming" end
         table.insert(STATE.recording.points, {
             pos = root.Position, rot = yRot, time = now,
             speed = hum.WalkSpeed, state = stName,
@@ -1260,10 +1199,7 @@ end
 local function stopRecording()
     if not STATE.recording.active then return end
     STATE.recording.active = false
-    if STATE.recording.conn then
-        STATE.recording.conn:Disconnect()
-        STATE.recording.conn = nil
-    end
+    if STATE.recording.conn then STATE.recording.conn:Disconnect(); STATE.recording.conn = nil end
     STATE.currentRecording = STATE.recording.points
     notify("⏹ Recording dihentikan (" .. #STATE.recording.points .. " titik)", T.TEXT)
 end
@@ -1302,45 +1238,32 @@ local function setupHumanoid(h)
 end
 
 local function stopPlayback()
-    if STATE.playing.conn then
-        STATE.playing.conn:Disconnect()
-        STATE.playing.conn = nil
-    end
+    if STATE.playing.conn then STATE.playing.conn:Disconnect(); STATE.playing.conn = nil end
     STATE.playing.active = false
     STATE.currentPlayingId = nil
     local h = getHum()
-    if h then
-        h:Move(Vector3.zero, false)
-        h.AutoRotate = true
-    end
+    if h then h:Move(Vector3.zero, false); h.AutoRotate = true end
     enableControls()
 end
 
 local function playWalk(points, id)
-    if not points or #points < 2 then
-        notify("❌ Tidak ada data walk", T.RED)
-        return
-    end
+    if not points or #points < 2 then notify("❌ Tidak ada data walk", T.RED); return end
     local char = getChar()
-    if not char then notify("❌ Character belum siap", T.RED) return end
+    if not char then notify("❌ Character belum siap", T.RED); return end
     local root = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 3)
     local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 3)
-    if not root or not hum then notify("❌ Humanoid tidak ditemukan", T.RED) return end
+    if not root or not hum then notify("❌ Humanoid tidak ditemukan", T.RED); return end
 
     stopPlayback()
-
     local first = points[1]
-    local dist = (root.Position - first.pos).Magnitude
-    if dist > CONFIG.TELEPORT_THRESHOLD then
+    if (root.Position - first.pos).Magnitude > CONFIG.TELEPORT_THRESHOLD then
         root.CFrame = CFrame.new(first.pos + Vector3.new(0, 3, 0)) * CFrame.Angles(0, first.rot, 0)
         task.wait(0.3)
         hum = getHum(); root = getRoot()
         if not hum or not root then return end
     end
-
     setupHumanoid(hum)
     disableControls()
-
     STATE.playing.active = true
     STATE.currentPlayingId = id
 
@@ -1353,45 +1276,31 @@ local function playWalk(points, id)
 
     STATE.playing.conn = RunService.Heartbeat:Connect(function()
         if not STATE.playing.active then return end
-        local h = getHum()
-        local r = getRoot()
-        if not h or not r then stopPlayback() return end
-
+        local h = getHum(); local r = getRoot()
+        if not h or not r then stopPlayback(); return end
         local elapsed = (tick() - startT) * speedScale
         if elapsed >= duration then
-            stopPlayback()
-            refreshSavedList()
-            notify("✅ AutoWalk selesai", T.GREEN)
-            return
+            stopPlayback(); refreshSavedList()
+            notify("✅ AutoWalk selesai", T.GREEN); return
         end
-
         local idx = 1
-        for i = 1, #points do
-            if points[i].time >= elapsed then idx = i break end
-        end
-        local targetIdx = math.min(idx + CONFIG.WAYPOINT_LOOKAHEAD, #points)
-        local target = points[targetIdx]
+        for i = 1, #points do if points[i].time >= elapsed then idx = i; break end end
+        local target = points[math.min(idx + CONFIG.WAYPOINT_LOOKAHEAD, #points)]
         local current = points[idx]
-
         local baseSpeed = (current.speed and current.speed > 0) and current.speed or CONFIG.DEFAULT_SPEED
         if math.abs(h.WalkSpeed - baseSpeed) > 0.5 then h.WalkSpeed = baseSpeed end
-
         local flatCur = Vector3.new(r.Position.X, 0, r.Position.Z)
         local flatTgt = Vector3.new(target.pos.X, 0, target.pos.Z)
         local dir = flatTgt - flatCur
         if dir.Magnitude > 0.3 then h:Move(dir.Unit, false) else h:Move(Vector3.zero, false) end
         h.AutoRotate = true
-
         local stateStr = normalizeState(current.state)
         local targetStateStr = normalizeState(target.state)
         local yDiff = target.pos.Y - r.Position.Y
-        local justJumped = false
-        if stateStr == "Jumping" and prevState ~= "Jumping" then justJumped = true end
+        local justJumped = (stateStr == "Jumping" and prevState ~= "Jumping")
         prevState = stateStr
-
         local wantsJump = (targetStateStr == "Jumping" or targetStateStr == "Freefall" or justJumped)
                            or (yDiff > CONFIG.Y_JUMP_THRESHOLD)
-
         if wantsJump and not jumpedForThisState and (tick() - lastJumpTime) > CONFIG.JUMP_COOLDOWN then
             local curState = h:GetState()
             local grounded = (curState == Enum.HumanoidStateType.Running)
@@ -1426,9 +1335,8 @@ end
 
 backBtn.Activated:Connect(function()
     playClick()
-    local targetT = tick() - CONFIG.BACK_SECONDS
-    local target = findHistoryAt(targetT)
-    if not target then notify("❌ Riwayat belum cukup", T.RED) return end
+    local target = findHistoryAt(tick() - CONFIG.BACK_SECONDS)
+    if not target then notify("❌ Riwayat belum cukup", T.RED); return end
     local root = getRoot()
     if not root then return end
     root.CFrame = CFrame.new(target.pos) * CFrame.Angles(0, target.rot, 0)
@@ -1449,7 +1357,7 @@ clearWalkBtn.Activated:Connect(function()
 end)
 
 -- ================================================================
--- AUTO SAVE / LOAD
+-- SAVE / LOAD
 -- ================================================================
 local function compressPoint(p)
     local out = {
@@ -1498,7 +1406,6 @@ local function loadConfig()
     if not ok or not content or content == "" then return end
     local ok2, data = pcall(HttpService.JSONDecode, HttpService, content)
     if not ok2 or typeof(data) ~= "table" then return end
-
     if data.walks then
         STATE.savedWalks = {}
         for _, w in ipairs(data.walks) do
@@ -1544,8 +1451,7 @@ refreshSavedList = function()
             Text = "Belum ada walk tersimpan.", TextColor3 = T.TEXT_DIM,
             TextSize = 12, Font = Enum.Font.Gotham, ZIndex = 54,
         }, savedScroll)
-        empty.LayoutOrder = 1
-        return
+        empty.LayoutOrder = 1; return
     end
     for i, w in ipairs(STATE.savedWalks) do
         local entry = newInst("Frame", {
@@ -1579,7 +1485,6 @@ refreshSavedList = function()
         }, entry)
         newInst("UICorner", { CornerRadius = UDim.new(0, 6) }, delB)
         applyGradientStroke(delB, 1, 6)
-
         playB.Activated:Connect(function()
             playClick()
             if STATE.currentPlayingId == w.name and STATE.playing.active then
@@ -1617,8 +1522,7 @@ refreshCpList = function()
             Text = "Belum ada CP. Rekam lalu SET CP.",
             TextColor3 = T.TEXT_DIM, TextSize = 9, Font = Enum.Font.Gotham, ZIndex = 203,
         }, cpScroll)
-        empty.LayoutOrder = 1
-        return
+        empty.LayoutOrder = 1; return
     end
     for i, cp in ipairs(STATE.checkpoints) do
         local entry = newInst("Frame", {
@@ -1652,7 +1556,7 @@ end
 setCpBtn.Activated:Connect(function()
     playClick()
     local pts = STATE.recording.points
-    if #pts < 2 then notify("❌ Belum ada rekaman untuk dijadikan CP", T.RED) return end
+    if #pts < 2 then notify("❌ Belum ada rekaman untuk dijadikan CP", T.RED); return end
     local cpName = "CP" .. (#STATE.checkpoints + 1)
     table.insert(STATE.checkpoints, { name = cpName, points = pts })
     refreshCpList()
@@ -1665,17 +1569,16 @@ setCpBtn.Activated:Connect(function()
         tween(recToggle, 0.2, { BackgroundColor3 = T.BG_ELEMENT2 })
         if STATE.recording.active then
             STATE.recording.active = false
-            if STATE.recording.conn then STATE.recording.conn:Disconnect() STATE.recording.conn = nil end
+            if STATE.recording.conn then STATE.recording.conn:Disconnect(); STATE.recording.conn = nil end
         end
     end
     notify("📍 " .. cpName .. " disimpan (" .. #pts .. " pts)", T.GOLD)
 end)
 
 local pendingAction = nil
-
 combineCpBtn.Activated:Connect(function()
     playClick()
-    if #STATE.checkpoints == 0 then notify("❌ Belum ada checkpoint", T.RED) return end
+    if #STATE.checkpoints == 0 then notify("❌ Belum ada checkpoint", T.RED); return end
     pendingAction = "combine"
     nameInput.Text = ""
     nameInput.Visible = true
@@ -1686,7 +1589,7 @@ end)
 saveWalkBtn.Activated:Connect(function()
     playClick()
     local pts = STATE.recording.points
-    if #pts < 2 then notify("❌ Belum ada rekaman", T.RED) return end
+    if #pts < 2 then notify("❌ Belum ada rekaman", T.RED); return end
     pendingAction = "saveCurrent"
     nameInput.Text = ""
     nameInput.Visible = true
@@ -1697,7 +1600,6 @@ confirmSaveBtn.Activated:Connect(function()
     playClick()
     local name = nameInput.Text
     if name == "" or name == nil then name = "Walk " .. (#STATE.savedWalks + 1) end
-
     if pendingAction == "combine" then
         local combined = {}
         local timeOffset = 0
@@ -1771,37 +1673,8 @@ end)
 UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
     or input.UserInputType == Enum.UserInputType.Touch then
-        if draggingSlider then
-            draggingSlider = false
-            saveConfig(true)
-        end
+        if draggingSlider then draggingSlider = false; saveConfig(true) end
     end
-end)
-
--- ================================================================
--- RESPONSIVE
--- ================================================================
-local function applyResponsive()
-    local cam = workspace.CurrentCamera
-    local v = cam and cam.ViewportSize or Vector2.new(1280, 720)
-    for _, f in ipairs({ mainFrame, miniUI }) do
-        if f.Visible then
-            local pos = f.AbsolutePosition
-            local size = f.AbsoluteSize
-            if pos.X < 0 then f.Position = UDim2.new(0, 0, f.Position.Y.Scale, f.Position.Y.Offset) end
-            if pos.Y < 0 then f.Position = UDim2.new(f.Position.X.Scale, f.Position.X.Offset, 0, 0) end
-            if (pos.X + size.X) > v.X then
-                f.Position = UDim2.new(f.Position.X.Scale, f.Position.X.Offset - ((pos.X + size.X) - v.X), f.Position.Y.Scale, f.Position.Y.Offset)
-            end
-            if (pos.Y + size.Y) > v.Y then
-                f.Position = UDim2.new(f.Position.X.Scale, f.Position.X.Offset, f.Position.Y.Scale, f.Position.Y.Offset - ((pos.Y + size.Y) - v.Y))
-            end
-        end
-    end
-end
-workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(applyResponsive)
-task.spawn(function()
-    while true do task.wait(1.5); applyResponsive() end
 end)
 
 -- ================================================================
@@ -1876,7 +1749,7 @@ ScreenGui.AncestryChanged:Connect(function()
 end)
 
 task.delay(0.6, function()
-    notify("✨ LuxxyHub AutoWalk v9.2 dimuat", T.PURPLE_LIGHT)
+    notify("✨ LuxxyHub AutoWalk v9.3 dimuat", T.PURPLE_LIGHT)
 end)
 
 log("Script loaded successfully")
