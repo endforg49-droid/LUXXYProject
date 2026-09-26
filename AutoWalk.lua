@@ -1,7 +1,7 @@
 --[[
     ╔═══════════════════════════════════════════════════════════╗
-    ║  LuxxyHub - AutoWalk (v10.6 HYBRID)                      ║
-    ║  Real Jump + Run Animation + 100% Path                   ║
+    ║  LuxxyHub - AutoWalk (v10.7 ANTI-BLINK)                  ║
+    ║  Pure CFrame + Smooth Lerp • No Physics Conflict         ║
     ╚═══════════════════════════════════════════════════════════╝
 ]]
 
@@ -14,7 +14,7 @@ local SoundService     = game:GetService("SoundService")
 local Debris           = game:GetService("Debris")
 local LocalPlayer      = Players.LocalPlayer
 
-local function log(msg) print("[LuxxyHub v10.6] " .. tostring(msg)) end
+local function log(msg) print("[LuxxyHub v10.7] " .. tostring(msg)) end
 log("Script started")
 
 -- ================================================================
@@ -65,15 +65,14 @@ local CONFIG = {
     REWIND_COOLDOWN = 2.0,
     SPEED_SMOOTH_SAMPLES = 6,
 
-    -- ★ HYBRID PLAYBACK
-    DRIFT_THRESHOLD   = 5,      -- CFrame snap kalau drift > 5 studs
-    DRIFT_HARD_SNAP   = 12,     -- Instant snap (tanpa lerp) kalau drift > 12 studs
-    JUMP_LEAD_TIME    = 0.25,   -- Trigger jump 0.25s sebelum waypoint Jumping
-    LOOKAHEAD         = 3,      -- Lookahead waypoint untuk steering
+    -- ★ v10.7 ANTI-BLINK CONFIG
+    CFRAME_LERP_ALPHA = 0.18,    -- Smooth CFrame lerp (0-1, higher = faster catchup)
+    JUMP_LEAD_TIME    = 0.25,    -- Trigger jump 0.25s sebelum waypoint Jumping
+    LOOKAHEAD         = 3,        -- Lookahead waypoint untuk steering
 
     -- Animation thresholds
     WALK_SPEED_MIN    = 12,
-    RUN_SPEED_MIN     = 20,     -- WalkSpeed ≥ 20 → Roblox pakai RUN animation
+    RUN_SPEED_MIN     = 20,       -- WalkSpeed ≥ 20 → Roblox pakai RUN animation
     RUN_SPEED_MAX     = 100,
 
     TRAIL_LIFETIME   = 999,
@@ -434,7 +433,7 @@ newInst("Frame", {
 }, header)
 newInst("TextLabel", {
     Size = UDim2.new(1, -60, 1, 0), Position = UDim2.new(0, 14, 0, 0),
-    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk v10.6",
+    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk v10.7",
     TextColor3 = T.WHITE, TextSize = 15, Font = Enum.Font.GothamBold,
     TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 52,
 }, header)
@@ -576,14 +575,14 @@ newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, sliderKnob)
 -- INFO
 newInst("TextLabel", {
     Size = UDim2.new(1, -20, 0, 26), Position = UDim2.new(0, 10, 0, 10),
-    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk v10.6 HYBRID",
+    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk v10.7 ANTI-BLINK",
     TextColor3 = T.WHITE, TextSize = 16, Font = Enum.Font.GothamBold,
     TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 53,
 }, pageInfo)
 newInst("TextLabel", {
     Size = UDim2.new(1, -20, 1, -50), Position = UDim2.new(0, 10, 0, 42),
     BackgroundTransparency = 1,
-    Text = "📢 INFO v10.6 HYBRID\n\n✅ Jump animation real (Roblox)\n✅ Run animation real (Roblox)\n✅ Hybrid: physics + CFrame precision\n✅ NO BLINK\n\nSpeed Boost:\n- ×1 = normal (walk)\n- ×2 = 2x (run)\n- ×5 = 5x (run)\n- ×10 = 10x (run)",
+    Text = "📢 v10.7 ANTI-BLINK\n\n✅ Pure CFrame movement\n✅ Zero physics conflict\n✅ Smooth lerp (NO snap)\n✅ Jump animation real\n✅ Run animation real\n✅ NO BLINK\n\nSpeed Boost:\n- ×1 = normal\n- ×2 = 2x speed\n- ×5 = 5x speed\n- ×10 = 10x speed",
     TextColor3 = T.TEXT_DIM, TextSize = 12, Font = Enum.Font.Gotham,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, ZIndex = 53,
@@ -1123,7 +1122,7 @@ recToggle.Activated:Connect(function()
 end)
 
 -- ================================================================
--- ★★★ PLAYBACK v10.6 — HYBRID (Physics + CFrame Precision) ★★★
+-- ★★★ PLAYBACK v10.7 — PURE CFRAME (NO BLINK) ★★★
 -- ================================================================
 local function stopPlayback()
     if STATE.playing.conn then STATE.playing.conn:Disconnect(); STATE.playing.conn = nil end
@@ -1159,7 +1158,7 @@ local function playWalk(points, id)
         if not hum or not root then return end
     end
 
-    -- ★ SETUP: Physics normal, AutoRotate ON (biar animasi normal)
+    -- ★ SETUP: Physics OFF, Pure CFrame mode
     hum.AutoRotate = true
     hum.PlatformStand = false
     hum.Sit = false
@@ -1184,14 +1183,15 @@ local function playWalk(points, id)
     local lastProgressTime = tick()
     local lastProgressPos = root.Position
 
-    log("Playback v10.6 HYBRID: " .. #points .. " wp, dur=" .. string.format("%.2f", totalTime) .. "s, mult=×" .. multiplier)
+    log("Playback v10.7 PURE CFRAME: " .. #points .. " wp, dur=" .. string.format("%.2f", totalTime) .. "s, mult=×" .. multiplier)
 
-    STATE.playing.conn = RunService.Heartbeat:Connect(function(dt)
+    STATE.playing.conn = RunService.Stepped:Connect(function()
         if not STATE.playing.active then return end
-        if dt <= 0 or dt > 1 then return end
         local r = getRoot()
         local h = getHum()
         if not r or not h then stopPlayback(); return end
+
+        local dt = 1 / 60  -- Fixed timestep untuk consistency
 
         -- ★ PROGRESS
         progress = progress + dt * multiplier
@@ -1212,54 +1212,40 @@ local function playWalk(points, id)
         local p1 = points[idx]
         local p2 = points[idx + 1] or p1
 
-        -- ★ INTERPOLASI POSISI TARGET
+        -- ★ INTERPOLASI POSITION TARGET — SMOOTH
         local segDur = p2.time - p1.time
         local rawAlpha = segDur > 0 and ((progress - p1.time) / segDur) or 0
         rawAlpha = math.clamp(rawAlpha, 0, 1)
+        -- Smoothstep: 3t^2 - 2t^3
         local alpha = rawAlpha * rawAlpha * (3 - 2 * rawAlpha)
         local targetPos = p1.pos:Lerp(p2.pos, alpha)
+        local targetRot = p1.rot + ((p2.rot - p1.rot + math.pi) % (2 * math.pi)) - math.pi
+        targetRot = p1.rot + (targetRot * alpha)
 
-        -- ★ SET WALKSPEED — bikin animasi RUN otomatis kalau >= RUN_SPEED_MIN
+        -- ★ SET WALKSPEED — trigger animation RUN otomatis
         local recSpeed = (p1.speed and p1.speed > 0) and p1.speed or CONFIG.DEFAULT_SPEED
         local animSpeed = math.clamp(recSpeed * multiplier, CONFIG.WALK_SPEED_MIN, CONFIG.RUN_SPEED_MAX)
         if math.abs(h.WalkSpeed - animSpeed) > 0.5 then
             h.WalkSpeed = animSpeed
         end
 
-        -- ★ HYBRID MOVEMENT
-        -- 1. Normal: pakai Humanoid:Move (physics, animasi natural)
-        -- 2. Kalau drift > threshold: snap CFrame biar akurat
-        local myPos = r.Position
-        local drift = (myPos - targetPos).Magnitude
+        -- ★ PURE CFRAME MOVEMENT — Smooth lerp, NO snap
+        local targetCF = CFrame.new(targetPos) * CFrame.Angles(0, targetRot, 0)
+        r.CFrame = r.CFrame:Lerp(targetCF, CONFIG.CFRAME_LERP_ALPHA)
 
-        if drift > CONFIG.DRIFT_HARD_SNAP then
-            -- Snap instant (kasus putus jalur)
-            r.CFrame = CFrame.new(targetPos) * CFrame.Angles(0, p1.rot + (p2.rot - p1.rot) * alpha, 0)
-            r.AssemblyLinearVelocity = Vector3.zero
-        elseif drift > CONFIG.DRIFT_THRESHOLD then
-            -- Soft lerp (perbaiki drift sedikit)
-            local targetCF = CFrame.new(targetPos) * CFrame.Angles(0, p1.rot + (p2.rot - p1.rot) * alpha, 0)
-            r.CFrame = r.CFrame:Lerp(targetCF, 0.3)
-        end
+        -- ★ VELOCITY ZERO — matikan physics, hanya CFrame
+        r.AssemblyLinearVelocity = Vector3.zero
+        r.AssemblyAngularVelocity = Vector3.zero
 
-        -- ★ STEERING via Humanoid:Move (physics normal → animasi muncul)
-        local myPosNow = r.Position
-        local flatCur = Vector3.new(myPosNow.X, 0, myPosNow.Z)
-        local flatTgt = Vector3.new(targetPos.X, 0, targetPos.Z)
-        local dir = flatTgt - flatCur
-        if dir.Magnitude > 0.3 then
-            h:Move(dir.Unit, false)
-        else
-            h:Move(Vector3.zero, false)
-        end
+        -- ★ HUMANOID MOVE — HANYA untuk animation trigger, tanpa direction steering
+        -- Ini membuat walk/run animation play tapi character tidak bergerak dari movement
+        h:Move(Vector3.new(0, 0, -1), false)  -- dummy direction hanya buat animasi
 
         -- ★ JUMP dengan LEAD TIME
-        -- Cek waypoint JUMPING berikutnya dalam range waktu LEAD_TIME
         for i = idx, math.min(#points, idx + 5) do
             local wp = points[i]
             local st = normalizeState(wp.state)
             if st == "Jumping" then
-                -- Trigger jump LEAD_TIME sebelum waypoint
                 local timeToJump = wp.time - progress
                 if timeToJump <= CONFIG.JUMP_LEAD_TIME and i > lastJumpIdx then
                     if (tick() - lastJumpTime) > 0.4 then
@@ -1694,7 +1680,7 @@ ScreenGui.AncestryChanged:Connect(function()
 end)
 
 task.delay(0.6, function()
-    notify("✨ LuxxyHub AutoWalk v10.6 dimuat", T.PURPLE_LIGHT)
+    notify("✨ LuxxyHub AutoWalk v10.7 ANTI-BLINK loaded", T.PURPLE_LIGHT)
 end)
 
 log("Script loaded successfully")
