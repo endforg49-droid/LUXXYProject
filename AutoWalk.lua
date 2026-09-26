@@ -1,12 +1,7 @@
 --[[
     ╔═══════════════════════════════════════════════════════════╗
-    ║  LuxxyHub - AutoWalk (v10.5 PRECISION)                   ║
-    ║  100% Exact Path + Real Animations + Speed Boost         ║
-    ║                                                           ║
-    ║  ✅ Recording playback 100% akurat                       ║
-    ║  ✅ Speed boost = accelerate jalur, bukan steering       ║
-    ║  ✅ Smooth animations (Walk, Run, Jump, Swim)           ║
-    ║  ✅ NO BLINKING - Physics-based + CFrame precision      ║
+    ║  LuxxyHub - AutoWalk (v10.6 HYBRID)                      ║
+    ║  Real Jump + Run Animation + 100% Path                   ║
     ╚═══════════════════════════════════════════════════════════╝
 ]]
 
@@ -19,8 +14,8 @@ local SoundService     = game:GetService("SoundService")
 local Debris           = game:GetService("Debris")
 local LocalPlayer      = Players.LocalPlayer
 
-local function log(msg) print("[LuxxyHub v10.5 PRECISION] " .. tostring(msg)) end
-log("Script started - PRECISION MODE")
+local function log(msg) print("[LuxxyHub v10.6] " .. tostring(msg)) end
+log("Script started")
 
 -- ================================================================
 -- PARENT GUI
@@ -69,15 +64,18 @@ local CONFIG = {
     TELEPORT_JUMP_DETECT = 30,
     REWIND_COOLDOWN = 2.0,
     SPEED_SMOOTH_SAMPLES = 6,
-    
-    -- ★ PRECISION SETTINGS (v10.5)
-    CFRAME_LERP_ALPHA = 0.15,
-    VELOCITY_LERP_ALPHA = 0.2,
-    WALK_SPEED_MIN = 10,
-    WALK_SPEED_MAX = 20,
-    RUN_SPEED_MIN = 22,
-    RUN_SPEED_MAX = 100,
-    
+
+    -- ★ HYBRID PLAYBACK
+    DRIFT_THRESHOLD   = 5,      -- CFrame snap kalau drift > 5 studs
+    DRIFT_HARD_SNAP   = 12,     -- Instant snap (tanpa lerp) kalau drift > 12 studs
+    JUMP_LEAD_TIME    = 0.25,   -- Trigger jump 0.25s sebelum waypoint Jumping
+    LOOKAHEAD         = 3,      -- Lookahead waypoint untuk steering
+
+    -- Animation thresholds
+    WALK_SPEED_MIN    = 12,
+    RUN_SPEED_MIN     = 20,     -- WalkSpeed ≥ 20 → Roblox pakai RUN animation
+    RUN_SPEED_MAX     = 100,
+
     TRAIL_LIFETIME   = 999,
     TRAIL_THICKNESS  = 0.8,
     TRAIL_COLOR_1    = Color3.fromRGB(88, 30, 160),
@@ -206,8 +204,7 @@ local function applyGradientStroke(frame, thickness, cornerRadius)
         end
     end
     local stroke = newInst("UIStroke", {
-        Name = "GradientStroke",
-        Thickness = thickness,
+        Name = "GradientStroke", Thickness = thickness,
         Color = Color3.new(1, 1, 1),
         ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
     }, frame)
@@ -227,8 +224,7 @@ end
 local function addBgImage(frame, cornerRadius)
     cornerRadius = cornerRadius or 14
     local bg = newInst("ImageLabel", {
-        Name = "BgImage",
-        Size = UDim2.new(1, 0, 1, 0),
+        Name = "BgImage", Size = UDim2.new(1, 0, 1, 0),
         BackgroundTransparency = 1,
         Image = CONFIG.BG_IMAGE_ID,
         ImageTransparency = CONFIG.BG_IMAGE_TRANS,
@@ -256,18 +252,13 @@ end)
 -- SCREENGUI
 -- ================================================================
 local ScreenGui = newInst("ScreenGui", {
-    Name = "LuxxyHub_AutoWalk",
-    ResetOnSpawn = false,
-    IgnoreGuiInset = true,
-    DisplayOrder = 999,
-    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-    Enabled = true,
+    Name = "LuxxyHub_AutoWalk", ResetOnSpawn = false,
+    IgnoreGuiInset = true, DisplayOrder = 999,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Enabled = true,
 }, parentGui)
 
 local notifHolder = newInst("Frame", {
-    Size = UDim2.new(1, 0, 0, 60),
-    BackgroundTransparency = 1,
-    ZIndex = 490,
+    Size = UDim2.new(1, 0, 0, 60), BackgroundTransparency = 1, ZIndex = 490,
 }, ScreenGui)
 
 local function notify(text, color)
@@ -275,22 +266,15 @@ local function notify(text, color)
         Size = UDim2.new(0, 0, 0, 34),
         Position = UDim2.new(0.5, 0, 0, 12),
         AnchorPoint = Vector2.new(0.5, 0),
-        BackgroundColor3 = T.BG_PANEL,
-        BorderSizePixel = 0,
-        ZIndex = 500,
+        BackgroundColor3 = T.BG_PANEL, BorderSizePixel = 0, ZIndex = 500,
     }, notifHolder)
     newInst("UICorner", { CornerRadius = UDim.new(0, 8) }, bg)
     applyGradientStroke(bg, 1.5, 8)
     newInst("TextLabel", {
-        Size = UDim2.new(1, -16, 1, 0),
-        Position = UDim2.new(0, 8, 0, 0),
-        BackgroundTransparency = 1,
-        Text = text,
-        TextColor3 = color or T.TEXT,
-        TextSize = 13,
-        Font = Enum.Font.GothamBold,
-        TextXAlignment = Enum.TextXAlignment.Center,
-        ZIndex = 502,
+        Size = UDim2.new(1, -16, 1, 0), Position = UDim2.new(0, 8, 0, 0),
+        BackgroundTransparency = 1, Text = text,
+        TextColor3 = color or T.TEXT, TextSize = 13,
+        Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 502,
     }, bg)
     tween(bg, 0.3, { Size = UDim2.new(0, 260, 0, 34) })
     task.delay(2.4, function()
@@ -313,20 +297,13 @@ local MINI_H  = math.clamp(vps.Y - 80, 320, 520)
 -- ================================================================
 -- FLOAT BUTTON
 -- ================================================================
-local FLOAT_BTN_X = 20
-local FLOAT_BTN_Y = 140
-
 local floatBtn = newInst("ImageButton", {
-    Name = "FloatBtn",
-    Size = UDim2.new(0, 54, 0, 54),
-    Position = UDim2.new(0, FLOAT_BTN_X, 0, FLOAT_BTN_Y),
-    AnchorPoint = Vector2.new(0, 0),
-    BackgroundColor3 = T.BG_PANEL,
-    BorderSizePixel = 0,
-    Image = CONFIG.IMG_OPEN,
-    ImageColor3 = Color3.new(1, 1, 1),
-    ScaleType = Enum.ScaleType.Fit,
-    ZIndex = 100, Active = true, AutoButtonColor = false,
+    Name = "FloatBtn", Size = UDim2.new(0, 54, 0, 54),
+    Position = UDim2.new(0, 20, 0, 140),
+    BackgroundColor3 = T.BG_PANEL, BorderSizePixel = 0,
+    Image = CONFIG.IMG_OPEN, ImageColor3 = Color3.new(1, 1, 1),
+    ScaleType = Enum.ScaleType.Fit, ZIndex = 100,
+    Active = true, AutoButtonColor = false,
 }, ScreenGui)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, floatBtn)
 applyGradientStroke(floatBtn, 2, 30)
@@ -339,15 +316,11 @@ newInst("UIPadding", {
 -- MAIN FRAME
 -- ================================================================
 local mainFrame = newInst("Frame", {
-    Name = "MainFrame",
-    Size = UDim2.new(0, MAIN_W, 0, MAIN_H),
+    Name = "MainFrame", Size = UDim2.new(0, MAIN_W, 0, MAIN_H),
     Position = UDim2.new(0.5, 0, 0.5, 0),
     AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundColor3 = T.BG_PANEL,
-    BorderSizePixel = 0,
-    Visible = false,
-    ZIndex = 50,
-    ClipsDescendants = true,
+    BackgroundColor3 = T.BG_PANEL, BorderSizePixel = 0,
+    Visible = false, ZIndex = 50, ClipsDescendants = true,
 }, ScreenGui)
 newInst("UICorner", { CornerRadius = UDim.new(0, 14) }, mainFrame)
 addBgImage(mainFrame, 14)
@@ -376,12 +349,9 @@ local function createTrail()
     local a0 = newInst("Attachment", { Name = "LuxxyTrailA0", Position = Vector3.new(0, halfT, 0) }, root)
     local a1 = newInst("Attachment", { Name = "LuxxyTrailA1", Position = Vector3.new(0, -halfT, 0) }, root)
     local trail = newInst("Trail", {
-        Name = "LuxxyTrail",
-        Attachment0 = a0, Attachment1 = a1,
-        Lifetime = CONFIG.TRAIL_LIFETIME,
-        MinLength = 0, FaceCamera = true,
-        LightEmission = 0.6, LightInfluence = 0,
-        WidthScale = NumberSequence.new(1),
+        Name = "LuxxyTrail", Attachment0 = a0, Attachment1 = a1,
+        Lifetime = CONFIG.TRAIL_LIFETIME, MinLength = 0, FaceCamera = true,
+        LightEmission = 0.6, LightInfluence = 0, WidthScale = NumberSequence.new(1),
         Color = ColorSequence.new({
             ColorSequenceKeypoint.new(0.00, CONFIG.TRAIL_COLOR_1),
             ColorSequenceKeypoint.new(0.50, CONFIG.TRAIL_COLOR_2),
@@ -419,7 +389,6 @@ local function openUI()
     mainFrame.Visible = true
     mainFrame.BackgroundTransparency = 1
     mainFrame.Size = UDim2.new(0, MAIN_W * 0.9, 0, MAIN_H * 0.9)
-    mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
     tween(mainFrame, 0.3, {
         Size = UDim2.new(0, MAIN_W, 0, MAIN_H),
         BackgroundTransparency = 0,
@@ -454,18 +423,18 @@ makeDraggable(mainFrame)
 local headerH = 42
 local header = newInst("Frame", {
     Size = UDim2.new(1, 0, 0, headerH),
-    BackgroundColor3 = T.BG_DARK,
-    BackgroundTransparency = 0.3, BorderSizePixel = 0, ZIndex = 51,
+    BackgroundColor3 = T.BG_DARK, BackgroundTransparency = 0.3,
+    BorderSizePixel = 0, ZIndex = 51,
 }, mainFrame)
 newInst("UICorner", { CornerRadius = UDim.new(0, 14) }, header)
 newInst("Frame", {
     Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 1, -14),
-    BackgroundColor3 = T.BG_DARK, BackgroundTransparency = 0.3, BorderSizePixel = 0, ZIndex = 51,
+    BackgroundColor3 = T.BG_DARK, BackgroundTransparency = 0.3,
+    BorderSizePixel = 0, ZIndex = 51,
 }, header)
-
 newInst("TextLabel", {
     Size = UDim2.new(1, -60, 1, 0), Position = UDim2.new(0, 14, 0, 0),
-    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk v10.5",
+    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk v10.6",
     TextColor3 = T.WHITE, TextSize = 15, Font = Enum.Font.GothamBold,
     TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 52,
 }, header)
@@ -560,8 +529,7 @@ local savedScroll = newInst("ScrollingFrame", {
     BackgroundColor3 = T.BG_ELEMENT, BackgroundTransparency = 0.6,
     BorderSizePixel = 0, ScrollBarThickness = 4,
     ScrollBarImageColor3 = T.PURPLE,
-    CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    ZIndex = 53,
+    CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 53,
 }, pageMain)
 newInst("UICorner", { CornerRadius = UDim.new(0, 8) }, savedScroll)
 applyGradientStroke(savedScroll, 1.5, 8)
@@ -593,16 +561,13 @@ local sliderTrack = newInst("Frame", {
     BackgroundColor3 = T.BG_ELEMENT2, BorderSizePixel = 0, ZIndex = 54,
 }, speedRow)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, sliderTrack)
-
 local sliderFill = newInst("Frame", {
-    Size = UDim2.new(0, 0, 1, 0),
-    BackgroundColor3 = T.PURPLE, BorderSizePixel = 0, ZIndex = 55,
+    Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = T.PURPLE,
+    BorderSizePixel = 0, ZIndex = 55,
 }, sliderTrack)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, sliderFill)
-
 local sliderKnob = newInst("Frame", {
-    Size = UDim2.new(0, 16, 0, 16),
-    Position = UDim2.new(0, 0, 0.5, 0),
+    Size = UDim2.new(0, 16, 0, 16), Position = UDim2.new(0, 0, 0.5, 0),
     AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundColor3 = T.WHITE, BorderSizePixel = 0, ZIndex = 56,
 }, sliderTrack)
@@ -611,14 +576,14 @@ newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, sliderKnob)
 -- INFO
 newInst("TextLabel", {
     Size = UDim2.new(1, -20, 0, 26), Position = UDim2.new(0, 10, 0, 10),
-    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk v10.5 PRECISION",
+    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk v10.6 HYBRID",
     TextColor3 = T.WHITE, TextSize = 16, Font = Enum.Font.GothamBold,
     TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 53,
 }, pageInfo)
 newInst("TextLabel", {
     Size = UDim2.new(1, -20, 1, -50), Position = UDim2.new(0, 10, 0, 42),
     BackgroundTransparency = 1,
-    Text = "📢 INFO v10.5 PRECISION\n\n• 100% Exact Path (CFrame Lerp)\n• Speed boost = accelerate jalur\n• Smooth animation: WALK, RUN, JUMP, SWIM\n• NO BLINKING - Physics + CFrame\n\nSpeed Boost:\n- ×1 = normal\n- ×2 = 2x lebih cepat\n- ×5 = 5x lebih cepat\n- ×10 = 10x lebih cepat",
+    Text = "📢 INFO v10.6 HYBRID\n\n✅ Jump animation real (Roblox)\n✅ Run animation real (Roblox)\n✅ Hybrid: physics + CFrame precision\n✅ NO BLINK\n\nSpeed Boost:\n- ×1 = normal (walk)\n- ×2 = 2x (run)\n- ×5 = 5x (run)\n- ×10 = 10x (run)",
     TextColor3 = T.TEXT_DIM, TextSize = 12, Font = Enum.Font.Gotham,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, ZIndex = 53,
@@ -628,8 +593,7 @@ newInst("TextLabel", {
 -- MINI UI
 -- ================================================================
 local miniUI = newInst("Frame", {
-    Name = "MiniRecord",
-    Size = UDim2.new(0, MINI_W, 0, MINI_H),
+    Name = "MiniRecord", Size = UDim2.new(0, MINI_W, 0, MINI_H),
     Position = UDim2.new(1, -MINI_W/2 - 16, 0.5, 0),
     AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundColor3 = T.BG_PANEL, BorderSizePixel = 0,
@@ -679,8 +643,7 @@ local miniBody = newInst("ScrollingFrame", {
     Size = UDim2.new(1, 0, 1, -miniHeaderH), Position = UDim2.new(0, 0, 0, miniHeaderH),
     BackgroundTransparency = 1, BorderSizePixel = 0,
     ScrollBarThickness = 3, ScrollBarImageColor3 = T.PURPLE,
-    CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    ZIndex = 201,
+    CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 201,
 }, miniUI)
 newInst("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, miniBody)
 newInst("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, miniBody)
@@ -787,8 +750,7 @@ local cpScroll = newInst("ScrollingFrame", {
     Size = UDim2.new(1, 0, 0, 80), BackgroundColor3 = T.BG_DARK,
     BackgroundTransparency = 0.5, BorderSizePixel = 0,
     ScrollBarThickness = 3, ScrollBarImageColor3 = T.PURPLE,
-    CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    ZIndex = 202,
+    CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 202,
 }, miniBody)
 cpScroll.LayoutOrder = 7
 newInst("UICorner", { CornerRadius = UDim.new(0, 6) }, cpScroll)
@@ -962,12 +924,6 @@ local function normalizeState(s)
     if not s then return "Running" end
     return tostring(s):gsub("Enum%.HumanoidStateType%.", "")
 end
-local function shortestAngle(from, to)
-    local diff = to - from
-    while diff > math.pi do diff = diff - math.pi * 2 end
-    while diff < -math.pi do diff = diff + math.pi * 2 end
-    return diff
-end
 
 -- ================================================================
 -- AUTO-REWIND
@@ -989,7 +945,7 @@ local function doRewind(reason)
     if not root then rewindBusy = false; return end
     local target = findHistoryAt(tick() - CONFIG.BACK_SECONDS)
     if not target then
-        notify("⚠ Tidak ada riwayat untuk rewind", T.RED)
+        notify("⚠ Tidak ada riwayat", T.RED)
         rewindBusy = false; return
     end
     if STATE.trail then STATE.trail.Enabled = false end
@@ -1018,7 +974,7 @@ local steppedConn = RunService.Stepped:Connect(function()
     if lastPos then
         local delta = (curPos - lastPos).Magnitude
         if delta > CONFIG.TELEPORT_JUMP_DETECT then
-            doRewind("Auto-Rewind (teleport terdeteksi)")
+            doRewind("Auto-Rewind (teleport)")
         end
     end
     lastPos = curPos
@@ -1037,7 +993,7 @@ arToggle.Activated:Connect(function()
     playClick()
     STATE.autoRewindEnabled = not STATE.autoRewindEnabled
     updateARToggleVisual()
-    notify(STATE.autoRewindEnabled and "🛡 Auto-Rewind ON" or "🛡 Auto-Rewind OFF",
+    notify(STATE.autoRewindEnabled and "🛡 ON" or "🛡 OFF",
            STATE.autoRewindEnabled and T.CYAN or T.TEXT_DIM)
 end)
 updateARToggleVisual()
@@ -1055,7 +1011,7 @@ trailToggle.Activated:Connect(function()
     playClick()
     STATE.trailEnabled = not STATE.trailEnabled
     updateTrailToggleVisual()
-    notify(STATE.trailEnabled and "✨ Trail ON" or "✨ Trail OFF",
+    notify(STATE.trailEnabled and "✨ ON" or "✨ OFF",
            STATE.trailEnabled and T.PURPLE_LIGHT or T.TEXT_DIM)
 end)
 updateTrailToggleVisual()
@@ -1088,8 +1044,7 @@ local function startRecording()
         if STATE.recording.prevPos then
             local dtReal = now - STATE.recording.prevTime
             if dtReal > 0.001 then
-                local dist = (root.Position - STATE.recording.prevPos).Magnitude
-                actualSpeed = dist / dtReal
+                actualSpeed = (root.Position - STATE.recording.prevPos).Magnitude / dtReal
             end
         end
         STATE.recording.prevPos = root.Position
@@ -1110,11 +1065,7 @@ local function startRecording()
 
         local inputSpeed = hum.WalkSpeed
         local finalSpeed
-        if smoothSpeed > 1 then
-            finalSpeed = smoothSpeed
-        else
-            finalSpeed = inputSpeed
-        end
+        if smoothSpeed > 1 then finalSpeed = smoothSpeed else finalSpeed = inputSpeed end
         finalSpeed = math.clamp(finalSpeed, 1, 300)
 
         local _, yRot = root.CFrame:ToOrientation()
@@ -1172,7 +1123,7 @@ recToggle.Activated:Connect(function()
 end)
 
 -- ================================================================
--- ★★★ PLAYBACK v10.5 PRECISION — 100% EXACT PATH ★★★
+-- ★★★ PLAYBACK v10.6 — HYBRID (Physics + CFrame Precision) ★★★
 -- ================================================================
 local function stopPlayback()
     if STATE.playing.conn then STATE.playing.conn:Disconnect(); STATE.playing.conn = nil end
@@ -1183,11 +1134,6 @@ local function stopPlayback()
         h:Move(Vector3.zero, false)
         h.AutoRotate = true
         h.WalkSpeed = CONFIG.DEFAULT_SPEED
-    end
-    local r = getRoot()
-    if r then
-        r.AssemblyLinearVelocity = Vector3.zero
-        r.AssemblyAngularVelocity = Vector3.zero
     end
     enableControls()
     destroyTrail()
@@ -1213,17 +1159,18 @@ local function playWalk(points, id)
         if not hum or not root then return end
     end
 
-    -- ★ SETUP HUMANOID
-    hum.AutoRotate = false
+    -- ★ SETUP: Physics normal, AutoRotate ON (biar animasi normal)
+    hum.AutoRotate = true
     hum.PlatformStand = false
     hum.Sit = false
     hum.UseJumpPower = true
-    if hum.JumpPower < 40 then hum.JumpPower = 50 end
+    if hum.JumpPower < 50 then hum.JumpPower = 50 end
     hum:SetStateEnabled(Enum.HumanoidStateType.Running, true)
     hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
     hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
     hum:SetStateEnabled(Enum.HumanoidStateType.Landed, true)
-    hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, true)
+    hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, true)
+    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
 
     disableControls()
     STATE.playing.active = true
@@ -1237,17 +1184,16 @@ local function playWalk(points, id)
     local lastProgressTime = tick()
     local lastProgressPos = root.Position
 
-    log("Playback v10.5 PRECISION: " .. #points .. " waypoints, duration=" .. string.format("%.2f", totalTime) .. "s, multiplier=×" .. multiplier)
+    log("Playback v10.6 HYBRID: " .. #points .. " wp, dur=" .. string.format("%.2f", totalTime) .. "s, mult=×" .. multiplier)
 
-    STATE.playing.conn = RunService.Stepped:Connect(function(_, dt)
+    STATE.playing.conn = RunService.Heartbeat:Connect(function(dt)
         if not STATE.playing.active then return end
         if dt <= 0 or dt > 1 then return end
-
         local r = getRoot()
         local h = getHum()
         if not r or not h then stopPlayback(); return end
 
-        -- ★ PROGRESS dengan speed boost
+        -- ★ PROGRESS
         progress = progress + dt * multiplier
         if progress >= totalTime then
             stopPlayback()
@@ -1256,7 +1202,7 @@ local function playWalk(points, id)
             return
         end
 
-        -- ★ FIND EXACT INTERPOLATION POINT
+        -- ★ CARI WAYPOINT (by time)
         local idx = 1
         for i = 1, #points do
             if points[i].time >= progress then idx = i; break end
@@ -1266,59 +1212,69 @@ local function playWalk(points, id)
         local p1 = points[idx]
         local p2 = points[idx + 1] or p1
 
-        -- ★ INTERPOLASI PRESISI
+        -- ★ INTERPOLASI POSISI TARGET
         local segDur = p2.time - p1.time
         local rawAlpha = segDur > 0 and ((progress - p1.time) / segDur) or 0
         rawAlpha = math.clamp(rawAlpha, 0, 1)
-
-        -- Smoothstep untuk smooth motion
         local alpha = rawAlpha * rawAlpha * (3 - 2 * rawAlpha)
-
         local targetPos = p1.pos:Lerp(p2.pos, alpha)
-        local targetRot = p1.rot + shortestAngle(p1.rot, p2.rot) * alpha
 
-        -- ★ APPLY POSITION (CFrame dengan smooth lerp)
-        local targetCF = CFrame.new(targetPos) * CFrame.Angles(0, targetRot, 0)
-        r.CFrame = r.CFrame:Lerp(targetCF, CONFIG.CFRAME_LERP_ALPHA)
-
-        -- ★ RESET VELOCITY
-        r.AssemblyLinearVelocity = Vector3.zero
-        r.AssemblyAngularVelocity = Vector3.zero
-
-        -- ★ ANIMATION: Set WalkSpeed berdasarkan recorded speed
+        -- ★ SET WALKSPEED — bikin animasi RUN otomatis kalau >= RUN_SPEED_MIN
         local recSpeed = (p1.speed and p1.speed > 0) and p1.speed or CONFIG.DEFAULT_SPEED
         local animSpeed = math.clamp(recSpeed * multiplier, CONFIG.WALK_SPEED_MIN, CONFIG.RUN_SPEED_MAX)
-
-        if math.abs(h.WalkSpeed - animSpeed) > 1 then
+        if math.abs(h.WalkSpeed - animSpeed) > 0.5 then
             h.WalkSpeed = animSpeed
         end
 
-        -- ★ STEERING via Humanoid:Move (untuk animasi berjalan)
-        local dirToTarget = targetPos - r.Position
-        local flatDir = Vector3.new(dirToTarget.X, 0, dirToTarget.Z)
+        -- ★ HYBRID MOVEMENT
+        -- 1. Normal: pakai Humanoid:Move (physics, animasi natural)
+        -- 2. Kalau drift > threshold: snap CFrame biar akurat
+        local myPos = r.Position
+        local drift = (myPos - targetPos).Magnitude
 
-        if flatDir.Magnitude > 0.2 then
-            h:Move(flatDir.Unit, false)
+        if drift > CONFIG.DRIFT_HARD_SNAP then
+            -- Snap instant (kasus putus jalur)
+            r.CFrame = CFrame.new(targetPos) * CFrame.Angles(0, p1.rot + (p2.rot - p1.rot) * alpha, 0)
+            r.AssemblyLinearVelocity = Vector3.zero
+        elseif drift > CONFIG.DRIFT_THRESHOLD then
+            -- Soft lerp (perbaiki drift sedikit)
+            local targetCF = CFrame.new(targetPos) * CFrame.Angles(0, p1.rot + (p2.rot - p1.rot) * alpha, 0)
+            r.CFrame = r.CFrame:Lerp(targetCF, 0.3)
+        end
+
+        -- ★ STEERING via Humanoid:Move (physics normal → animasi muncul)
+        local myPosNow = r.Position
+        local flatCur = Vector3.new(myPosNow.X, 0, myPosNow.Z)
+        local flatTgt = Vector3.new(targetPos.X, 0, targetPos.Z)
+        local dir = flatTgt - flatCur
+        if dir.Magnitude > 0.3 then
+            h:Move(dir.Unit, false)
         else
             h:Move(Vector3.zero, false)
         end
 
-        -- ★ JUMP DETECTION & TRIGGER
-        for i = math.max(idx, lastJumpIdx), math.min(idx + 2, #points) do
-            local st = normalizeState(points[i].state)
+        -- ★ JUMP dengan LEAD TIME
+        -- Cek waypoint JUMPING berikutnya dalam range waktu LEAD_TIME
+        for i = idx, math.min(#points, idx + 5) do
+            local wp = points[i]
+            local st = normalizeState(wp.state)
             if st == "Jumping" then
-                if (tick() - lastJumpTime) > 0.3 then
-                    local cs = h:GetState()
-                    local canJump = (cs == Enum.HumanoidStateType.Running)
-                                 or (cs == Enum.HumanoidStateType.Landed)
-                                 or (cs == Enum.HumanoidStateType.Idle)
-                    if canJump then
-                        h.Jump = true
-                        lastJumpTime = tick()
-                        lastJumpIdx = i
+                -- Trigger jump LEAD_TIME sebelum waypoint
+                local timeToJump = wp.time - progress
+                if timeToJump <= CONFIG.JUMP_LEAD_TIME and i > lastJumpIdx then
+                    if (tick() - lastJumpTime) > 0.4 then
+                        local cs = h:GetState()
+                        local grounded = (cs == Enum.HumanoidStateType.Running)
+                                      or (cs == Enum.HumanoidStateType.Landed)
+                                      or (cs == Enum.HumanoidStateType.Idle)
+                        if grounded then
+                            h.Jump = true
+                            lastJumpTime = tick()
+                            lastJumpIdx = i
+                        end
                     end
+                    break
                 end
-                break
             end
         end
 
@@ -1326,7 +1282,7 @@ local function playWalk(points, id)
         if (r.Position - lastProgressPos).Magnitude > 0.5 then
             lastProgressTime = tick()
             lastProgressPos = r.Position
-        elseif (tick() - lastProgressTime) > 6 then
+        elseif (tick() - lastProgressTime) > 8 then
             stopPlayback()
             notify("⚠ Playback stuck", T.RED)
         end
@@ -1413,10 +1369,8 @@ local function saveConfig(silent)
         table.insert(walksData, { n = w.name, pts = pts })
     end
     local data = {
-        walks = walksData,
-        multiplier = STATE.speedMultiplier,
-        autoRewind = STATE.autoRewindEnabled,
-        trailEnabled = STATE.trailEnabled,
+        walks = walksData, multiplier = STATE.speedMultiplier,
+        autoRewind = STATE.autoRewindEnabled, trailEnabled = STATE.trailEnabled,
     }
     pcall(function()
         if typeof(writefile) == "function" then
@@ -1440,18 +1394,13 @@ local function loadConfig()
             for _, cp in ipairs(w.pts or {}) do
                 if cp.p and typeof(cp.p) == "table" then
                     table.insert(points, decompressPoint(cp))
-                elseif cp.pos then
-                    local pos = cp.pos
-                    if typeof(pos) == "table" and pos.x then pos = Vector3.new(pos.x, pos.y, pos.z) end
-                    table.insert(points, { pos = pos, rot = cp.rot or 0, time = cp.time or 0,
-                        speed = cp.speed or CONFIG.DEFAULT_SPEED, state = normalizeState(cp.state) })
                 end
             end
-            table.insert(STATE.savedWalks, { name = w.n or w.name or "Walk", points = points, speed = w.speed or CONFIG.DEFAULT_SPEED })
+            table.insert(STATE.savedWalks, { name = w.n or "Walk", points = points })
         end
         notify("📂 " .. #STATE.savedWalks .. " walk dimuat", T.GREEN)
     end
-    local mult = data.multiplier or data.speed
+    local mult = data.multiplier
     if mult then
         mult = math.clamp(math.floor(mult + 0.5), CONFIG.MIN_MULT, CONFIG.MAX_MULT)
         updateSliderVisual(mult)
@@ -1649,7 +1598,7 @@ confirmSaveBtn.Activated:Connect(function()
             return
         end
         table.insert(STATE.savedWalks, { name = name, points = combined, speed = STATE.speedMultiplier })
-        notify("🔗 Combined (" .. #STATE.checkpoints .. " CP → " .. #combined .. " pts)", T.GREEN)
+        notify("🔗 Combined", T.GREEN)
         STATE.checkpoints = {}
         refreshCpList()
     else
@@ -1745,7 +1694,7 @@ ScreenGui.AncestryChanged:Connect(function()
 end)
 
 task.delay(0.6, function()
-    notify("✨ LuxxyHub AutoWalk v10.5 PRECISION dimuat", T.PURPLE_LIGHT)
+    notify("✨ LuxxyHub AutoWalk v10.6 dimuat", T.PURPLE_LIGHT)
 end)
 
-log("Script loaded - PRECISION MODE ACTIVE")
+log("Script loaded successfully")
