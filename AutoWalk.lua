@@ -1,9 +1,7 @@
 --[[
     ╔══════════════════════════════════════════════════════╗
-    ║  LuxxyHub - AutoWalk (v10.3 - FIXED SMOOTH VERSION)   ║
-    ║                                                      ║
-    ║  FIX: Menghilangkan blinking saat playback           ║
-    ║  dengan smooth interpolation & velocity handling     ║
+    ║  LuxxyHub - AutoWalk (v10.4 - Physics + RUN Anim)    ║
+    ║  Anti-Blink + Roblox Native Animation                ║
     ╚══════════════════════════════════════════════════════╝
 ]]
 
@@ -16,7 +14,7 @@ local SoundService     = game:GetService("SoundService")
 local Debris           = game:GetService("Debris")
 local LocalPlayer      = Players.LocalPlayer
 
-local function log(msg) print("[LuxxyHub v10.3 FIXED] " .. tostring(msg)) end
+local function log(msg) print("[LuxxyHub v10.4] " .. tostring(msg)) end
 log("Script started")
 
 -- ================================================================
@@ -51,7 +49,7 @@ pcall(function() cleanupIn(LocalPlayer:WaitForChild("PlayerGui", 2)) end)
 task.wait(0.1)
 
 -- ================================================================
--- CONFIG (★ SMOOTH SETTINGS IMPROVED)
+-- CONFIG
 -- ================================================================
 local CONFIG = {
     FILE_NAME       = "LuxxyHub_AutoWalk_Config.json",
@@ -66,13 +64,14 @@ local CONFIG = {
     TELEPORT_JUMP_DETECT = 30,
     REWIND_COOLDOWN = 2.0,
     SPEED_SMOOTH_SAMPLES = 6,
-    
-    -- ★ IMPROVED SMOOTHING (FIX BLINKING)
-    SMOOTH_ALPHA_MAX = 0.25,        -- ★ Turun dari 0.5 → 0.25 (lebih smooth)
-    SMOOTH_K         = 75,          -- ★ Naik dari 30 → 75 (lerp lebih responsif)
-    VELOCITY_SMOOTH_K = 100,        -- ★ NEW: untuk smooth velocity lerp
-    MOVEMENT_LERP_SPEED = 0.15,    -- ★ NEW: smooth movement direction
-    
+    -- ★ Animation
+    RUN_ANIM_MIN_SPEED = 22,     -- WalkSpeed minimum untuk trigger RUN animation
+    RUN_ANIM_MAX_SPEED = 100,    -- Cap biar tidak di-flag anti-cheat
+    LOOKAHEAD = 3,
+    STUCK_TIMEOUT = 6,
+    BG_IMAGE_ID      = "rbxassetid://125806010780793",
+    BG_IMAGE_TRANS   = 0.75,
+    BG_IMAGE_COLOR   = Color3.fromRGB(180, 140, 230),
     TRAIL_LIFETIME   = 999,
     TRAIL_THICKNESS  = 0.8,
     TRAIL_COLOR_1    = Color3.fromRGB(88, 30, 160),
@@ -123,9 +122,6 @@ local STATE = {
     trail = nil,
     trailAttachments = {},
     trailEnabled = true,
-    -- ★ NEW: untuk smooth playback state
-    lastPlaybackCF = nil,
-    lastPlaybackVelocity = Vector3.zero,
 }
 
 -- ================================================================
@@ -444,7 +440,7 @@ floatBtn.Activated:Connect(toggleUI)
 makeDraggable(mainFrame)
 
 -- ================================================================
--- UI CONTENT (SKIPPED FOR BREVITY - sama seperti original)
+-- UI CONTENT
 -- ================================================================
 local headerH = 42
 local header = newInst("Frame", {
@@ -460,7 +456,7 @@ newInst("Frame", {
 
 newInst("TextLabel", {
     Size = UDim2.new(1, -60, 1, 0), Position = UDim2.new(0, 14, 0, 0),
-    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk v10.3 FIXED",
+    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk",
     TextColor3 = T.WHITE, TextSize = 15, Font = Enum.Font.GothamBold,
     TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 52,
 }, header)
@@ -563,7 +559,6 @@ applyGradientStroke(savedScroll, 1.5, 8)
 newInst("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, savedScroll)
 newInst("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, savedScroll)
 
--- SPEED BOOST ROW
 local speedRow = newInst("Frame", {
     Size = UDim2.new(1, -20, 0, 60), Position = UDim2.new(0, 10, 1, -70),
     BackgroundColor3 = T.BG_ELEMENT, BackgroundTransparency = 0.55,
@@ -607,21 +602,21 @@ newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, sliderKnob)
 -- INFO
 newInst("TextLabel", {
     Size = UDim2.new(1, -20, 0, 26), Position = UDim2.new(0, 10, 0, 10),
-    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk v10.3 FIXED",
+    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk v10.4",
     TextColor3 = T.WHITE, TextSize = 16, Font = Enum.Font.GothamBold,
     TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 53,
 }, pageInfo)
 newInst("TextLabel", {
     Size = UDim2.new(1, -20, 1, -50), Position = UDim2.new(0, 10, 0, 42),
     BackgroundTransparency = 1,
-    Text = "📢 INFO v10.3 FIXED\n\n• Speed Boost ×1 sampai ×10\n• Auto-detect speed player saat record\n• ✨ SMOOTH Playback (tanpa blinking!)\n• Lerp interpolation yang halus\n• Physics handling yang baik\n• Anti-blink dengan velocity smoothing\n\nFIX:\n- SMOOTH_K: 30 → 75 (lebih responsif)\n- ALPHA: 0.5 → 0.25 (lebih smooth)\n- Velocity lerp bukan direct set\n- Better movement direction interpolation",
+    Text = "📢 INFO v10.4\n\n• Physics-based playback (NO BLINK)\n• Animasi Roblox asli: RUN + JUMP\n• Speed Boost ×1 sampai ×10\n• Auto-detect speed saat record\n\nCara kerja:\n- Karakter bergerak via physics (Humanoid:Move)\n- WalkSpeed ≥ 22 → animasi RUN otomatis\n- Jump trigger pakai h.Jump = true",
     TextColor3 = T.TEXT_DIM, TextSize = 12, Font = Enum.Font.Gotham,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, ZIndex = 53,
 }, pageInfo)
 
 -- ================================================================
--- MINI UI (SKIPPED FOR BREVITY)
+-- MINI UI
 -- ================================================================
 local miniUI = newInst("Frame", {
     Name = "MiniRecord",
@@ -958,12 +953,6 @@ local function normalizeState(s)
     if not s then return "Running" end
     return tostring(s):gsub("Enum%.HumanoidStateType%.", "")
 end
-local function shortestAngle(from, to)
-    local diff = to - from
-    while diff > math.pi do diff = diff - math.pi * 2 end
-    while diff < -math.pi do diff = diff + math.pi * 2 end
-    return diff
-end
 
 -- ================================================================
 -- AUTO-REWIND
@@ -1168,20 +1157,8 @@ recToggle.Activated:Connect(function()
 end)
 
 -- ================================================================
--- ★★★ PLAYBACK v10.3 FIX — SMOOTH ANTI-BLINK ★★★
+-- ★★★ PLAYBACK v10.4 — PHYSICS + RUN ANIMATION ★★★
 -- ================================================================
-local function setupHumanoidForPlayback(h)
-    if not h then return end
-    h.AutoRotate = false
-    h.PlatformStand = false
-    h.Sit = false
-    h:SetStateEnabled(Enum.HumanoidStateType.Running, true)
-    h:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
-    h:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
-    h:SetStateEnabled(Enum.HumanoidStateType.Landed, true)
-    h:SetStateEnabled(Enum.HumanoidStateType.Climbing, true)
-end
-
 local function stopPlayback()
     if STATE.playing.conn then STATE.playing.conn:Disconnect(); STATE.playing.conn = nil end
     STATE.playing.active = false
@@ -1192,13 +1169,6 @@ local function stopPlayback()
         h.AutoRotate = true
         h.WalkSpeed = CONFIG.DEFAULT_SPEED
     end
-    local r = getRoot()
-    if r then
-        r.AssemblyLinearVelocity = Vector3.zero
-        r.AssemblyAngularVelocity = Vector3.zero
-    end
-    STATE.lastPlaybackCF = nil
-    STATE.lastPlaybackVelocity = Vector3.zero
     enableControls()
     destroyTrail()
 end
@@ -1223,12 +1193,22 @@ local function playWalk(points, id)
         if not hum or not root then return end
     end
 
-    setupHumanoidForPlayback(hum)
+    -- ★ SETUP PHYSICS + ANIMATION
+    hum.AutoRotate = true        -- ★ karakter hadap arah gerak → animasi jalan otomatis
+    hum.PlatformStand = false
+    hum.Sit = false
+    hum.UseJumpPower = true
+    if hum.JumpPower < 40 then hum.JumpPower = 50 end
+    hum:SetStateEnabled(Enum.HumanoidStateType.Running, true)
+    hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+    hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
+    hum:SetStateEnabled(Enum.HumanoidStateType.Landed, true)
+    hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, true)
+    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+
     disableControls()
     STATE.playing.active = true
     STATE.currentPlayingId = id
-    STATE.lastPlaybackCF = root.CFrame
-    STATE.lastPlaybackVelocity = Vector3.zero
 
     local progress = 0
     local totalTime = points[#points].time
@@ -1236,14 +1216,12 @@ local function playWalk(points, id)
     local lastJumpIdx = 0
     local lastProgressTime = tick()
     local lastProgressPos = root.Position
-    local JUMP_CHECK_RANGE = 4
-    local STUCK_TIMEOUT = 6
 
-    log("Playback v10.3 FIX: " .. #points .. " wp, dur=" .. string.format("%.2f", totalTime) .. "s, mult=×" .. multiplier)
+    log("Playback v10.4: " .. #points .. " wp, mult=×" .. multiplier)
 
-    STATE.playing.conn = RunService.Stepped:Connect(function(_, dt)
+    STATE.playing.conn = RunService.Heartbeat:Connect(function(dt)
         if not STATE.playing.active then return end
-        if dt <= 0 or dt > 1 then return end   -- Skip anomalous dts
+        if dt <= 0 or dt > 1 then return end
         local r = getRoot()
         local h = getHum()
         if not r or not h then stopPlayback(); return end
@@ -1257,57 +1235,43 @@ local function playWalk(points, id)
             return
         end
 
-        -- Find waypoints by time
+        -- Cari waypoint by time
         local idx = 1
         for i = 1, #points do
             if points[i].time >= progress then idx = i; break end
         end
         if idx >= #points then idx = #points - 1 end
 
-        local p1 = points[idx]
-        local p2 = points[idx + 1] or p1
+        local current = points[idx]
 
-        -- Interpolation dengan smoothstep
-        local segDur = p2.time - p1.time
-        local rawAlpha = segDur > 0 and ((progress - p1.time) / segDur) or 0
-        rawAlpha = math.clamp(rawAlpha, 0, 1)
-        local alpha = rawAlpha * rawAlpha * (3 - 2 * rawAlpha)   -- smoothstep
+        -- ★ Target pakai LOOKAHEAD (biar halus, tidak patah-patah)
+        local targetIdx = math.min(idx + CONFIG.LOOKAHEAD, #points)
+        local target = points[targetIdx]
 
-        local targetPos = p1.pos:Lerp(p2.pos, alpha)
-        local targetRot = p1.rot + shortestAngle(p1.rot, p2.rot) * alpha
-
-        -- ★ FIX: Smooth CFrame lerp dengan lebih small alpha
-        local targetCF = CFrame.new(targetPos) * CFrame.Angles(0, targetRot, 0)
-        local smoothAlpha = math.min(CONFIG.SMOOTH_ALPHA_MAX, dt * CONFIG.SMOOTH_K)
-        r.CFrame = r.CFrame:Lerp(targetCF, smoothAlpha)
-
-        -- ★ FIX: Velocity lerp instead of direct set (prevent jerky motion)
-        local targetVelocity = Vector3.zero
-        local velLerpAlpha = math.min(1, dt * CONFIG.VELOCITY_SMOOTH_K)
-        STATE.lastPlaybackVelocity = STATE.lastPlaybackVelocity:Lerp(targetVelocity, velLerpAlpha)
-        r.AssemblyLinearVelocity = STATE.lastPlaybackVelocity
-        r.AssemblyAngularVelocity = Vector3.zero
-
-        -- SET WalkSpeed untuk animasi
-        local recSpeed = (p1.speed and p1.speed > 0) and p1.speed or CONFIG.DEFAULT_SPEED
-        local animSpeed = math.clamp(recSpeed * multiplier, 6, 200)
-        if math.abs(h.WalkSpeed - animSpeed) > 0.5 then
-            h.WalkSpeed = animSpeed
+        -- ★ SET WalkSpeed untuk RUN animation
+        -- Formula: rekaman speed × multiplier, min 22 biar trigger RUN
+        local recSpeed = (current.speed and current.speed > 0) and current.speed or CONFIG.DEFAULT_SPEED
+        local targetWalkSpeed = recSpeed * multiplier
+        targetWalkSpeed = math.clamp(targetWalkSpeed, CONFIG.RUN_ANIM_MIN_SPEED, CONFIG.RUN_ANIM_MAX_SPEED)
+        if math.abs(h.WalkSpeed - targetWalkSpeed) > 0.5 then
+            h.WalkSpeed = targetWalkSpeed
         end
 
-        -- ★ FIX: Smooth movement direction lerp
-        local dir = targetPos - r.Position
-        local flatDir = Vector3.new(dir.X, 0, dir.Z)
-        if flatDir.Magnitude > 0.1 then
-            -- Gradually interpolate movement direction
-            local moveDir = flatDir.Unit
-            h:Move(moveDir, false)
+        -- ★ STEER via Humanoid:Move (physics-based, no blink, animation plays)
+        local myPos = r.Position
+        local flatCur = Vector3.new(myPos.X, 0, myPos.Z)
+        local flatTgt = Vector3.new(target.pos.X, 0, target.pos.Z)
+        local dir = flatTgt - flatCur
+        local dirMag = dir.Magnitude
+
+        if dirMag > 0.5 then
+            h:Move(dir.Unit, false)   -- ★ physics movement → animasi RUN otomatis
         else
             h:Move(Vector3.zero, false)
         end
 
-        -- Jump handling (lebih conservative)
-        for i = math.max(idx, lastJumpIdx + 1), math.min(idx + JUMP_CHECK_RANGE, #points) do
+        -- ★ JUMP handling
+        for i = math.max(idx, lastJumpIdx + 1), math.min(idx + 4, #points) do
             local st = normalizeState(points[i].state)
             if st == "Jumping" then
                 local cs = h:GetState()
@@ -1322,11 +1286,11 @@ local function playWalk(points, id)
             end
         end
 
-        -- Stuck detection
+        -- ★ STUCK detection
         if (r.Position - lastProgressPos).Magnitude > 0.5 then
             lastProgressTime = tick()
             lastProgressPos = r.Position
-        elseif (tick() - lastProgressTime) > STUCK_TIMEOUT then
+        elseif (tick() - lastProgressTime) > CONFIG.STUCK_TIMEOUT then
             stopPlayback()
             notify("⚠ Playback stuck — dihentikan", T.RED)
         end
@@ -1745,7 +1709,7 @@ ScreenGui.AncestryChanged:Connect(function()
 end)
 
 task.delay(0.6, function()
-    notify("✨ LuxxyHub AutoWalk v10.3 FIXED - Smooth playback aktif!", T.PURPLE_LIGHT)
+    notify("✨ LuxxyHub AutoWalk v10.4 dimuat", T.PURPLE_LIGHT)
 end)
 
-log("Script loaded successfully - SMOOTH MODE ENABLED")
+log("Script loaded successfully")
