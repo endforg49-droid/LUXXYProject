@@ -1,6 +1,6 @@
 --[[
     ╔══════════════════════════════════════════════════════╗
-    ║  LuxxyHub - AutoWalk (v9.7 - Perfect Follow Path)    ║
+    ║  LuxxyHub - AutoWalk (v10 - Roller Coaster Playback) ║
     ║  For Delta Executor                                   ║
     ╚══════════════════════════════════════════════════════╝
 ]]
@@ -17,7 +17,7 @@ local SoundService     = game:GetService("SoundService")
 local Debris           = game:GetService("Debris")
 local LocalPlayer      = Players.LocalPlayer
 
-local function log(msg) print("[LuxxyHub v9.7] " .. tostring(msg)) end
+local function log(msg) print("[LuxxyHub v10] " .. tostring(msg)) end
 log("Script started")
 
 -- ================================================================
@@ -70,14 +70,10 @@ local CONFIG = {
     HISTORY_BUFFER  = 10,
     TELEPORT_THRESHOLD = 25,
     TELEPORT_JUMP_DETECT = 30,
-    JUMP_COOLDOWN   = 0.4,
-    Y_JUMP_THRESHOLD = 1.5,
     REWIND_COOLDOWN = 2.0,
-    -- ★ Playback tuning
-    WAYPOINT_REACH_DIST = 3,      -- jarak untuk anggap waypoint "reached"
-    LOOKAHEAD           = 2,      -- waypoint lookahead untuk target gerak
-    STUCK_TIMEOUT       = 5,      -- detik stuck sebelum stop
-    JUMP_LOOKAHEAD      = 3,      -- cek jump sampai N waypoint ke depan
+    -- ★ Roller coaster tuning
+    ANIMATION_WALKSPEED_MIN = 8,   -- WalkSpeed minimum untuk animasi
+    ANIMATION_WALKSPEED_MAX = 100, -- WalkSpeed max untuk animasi
     BG_IMAGE_ID      = "rbxassetid://125806010780793",
     BG_IMAGE_TRANS   = 0.75,
     BG_IMAGE_COLOR   = Color3.fromRGB(180, 140, 230),
@@ -702,7 +698,7 @@ newInst("TextLabel", {
     Size = UDim2.new(1, -20, 0, 26),
     Position = UDim2.new(0, 10, 0, 10),
     BackgroundTransparency = 1,
-    Text = "LuxxyHub  •  AutoWalk v9.7",
+    Text = "LuxxyHub  •  AutoWalk v10",
     TextColor3 = T.WHITE,
     TextSize = 16,
     Font = Enum.Font.GothamBold,
@@ -714,7 +710,7 @@ newInst("TextLabel", {
     Size = UDim2.new(1, -20, 1, -50),
     Position = UDim2.new(0, 10, 0, 42),
     BackgroundTransparency = 1,
-    Text = "📢 INFO v9.7\n\n• 100% follow path (proximity-based)\n• SPEED BOOST = WalkSpeed only\n• Tidak mengubah timing recording\n• Trail saat recording\n• Auto-Rewind teleport protection\n\nSpeed Boost = seberapa cepat karakter\nberjalan. Semakin tinggi = playback\nselesai lebih cepat.",
+    Text = "📢 INFO v10\n\n• 🎢 Roller Coaster Playback\n  Karakter nempel di rel recording\n• Speed Boost = kecepatan sepanjang rel\n• Recording otomatis deteksi speed player\n• Trail Recording\n• Auto-Rewind\n\nSpeed Boost:\n- 16 = normal\n- 32 = 2x lebih cepat\n- 64 = 4x lebih cepat",
     TextColor3 = T.TEXT_DIM,
     TextSize = 12,
     Font = Enum.Font.Gotham,
@@ -1211,7 +1207,7 @@ end)
 updateTrailToggleVisual()
 
 -- ================================================================
--- RECORD
+-- RECORD — Deteksi speed player otomatis
 -- ================================================================
 local function startRecording()
     if STATE.recording.active then return end
@@ -1228,22 +1224,32 @@ local function startRecording()
         local now = tick() - STATE.recording.startTime
         local last = STATE.recording.points[#STATE.recording.points]
         if last and (now - last.time) < CONFIG.RECORD_INTERVAL then return end
+
         local _, yRot = root.CFrame:ToOrientation()
         local st = hum:GetState()
         local stName = "Running"
-        if st == Enum.HumanoidStateType.Jumping or hum.Jump then stName = "Jumping"
+        if st == Enum.HumanoidStateType.Jumping then stName = "Jumping"
         elseif st == Enum.HumanoidStateType.Freefall then stName = "Freefall"
         elseif st == Enum.HumanoidStateType.Climbing then stName = "Climbing"
         elseif st == Enum.HumanoidStateType.Swimming then stName = "Swimming" end
+
+        -- ★ DETEKSI SPEED PLAYER — pakai WalkSpeed asli
+        local playerSpeed = hum.WalkSpeed
+        if playerSpeed < 1 then playerSpeed = CONFIG.DEFAULT_SPEED end  -- fallback
+
         table.insert(STATE.recording.points, {
-            pos = root.Position, rot = yRot, time = now,
-            speed = hum.WalkSpeed, state = stName,
+            pos = root.Position,
+            rot = yRot,
+            time = now,
+            speed = playerSpeed,   -- ★ ini yang diterapkan ke playback
+            state = stName,
         })
+
         local totalDist = 0
         for i = 2, #STATE.recording.points do
             totalDist = totalDist + (STATE.recording.points[i].pos - STATE.recording.points[i - 1].pos).Magnitude
         end
-        statsLabel.Text = string.format("%.1f studs  •  %.2f s  •  %d pts", totalDist, now, #STATE.recording.points)
+        statsLabel.Text = string.format("%.1f studs  •  %.2f s  •  %d pts  •  spd %.0f", totalDist, now, #STATE.recording.points, playerSpeed)
     end)
     notify("🔴 Recording dimulai", T.GREEN)
 end
@@ -1279,21 +1285,20 @@ recToggle.Activated:Connect(function()
 end)
 
 -- ================================================================
--- ★★★ PLAYBACK v9.7 — PROXIMITY-BASED (100% FOLLOW PATH) ★★★
+-- ★★★ PLAYBACK v10 — ROLLER COASTER (CFrame-based) ★★★
 -- ================================================================
-local function setupHumanoid(h)
+local function setupHumanoidForPlayback(h)
     if not h then return end
     h.PlatformStand = false
     h.Sit = false
-    h.AutoRotate = true
+    h.AutoRotate = false   -- kita handle rotasi manual
     h.UseJumpPower = true
     if h.JumpPower < 40 then h.JumpPower = 50 end
     h:SetStateEnabled(Enum.HumanoidStateType.Running, true)
-    h:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+    h:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)  -- disable jump auto
     h:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
-    h:SetStateEnabled(Enum.HumanoidStateType.Climbing, true)
+    h:SetStateEnabled(Enum.HumanoidStateType.Climbing, false)
     h:SetStateEnabled(Enum.HumanoidStateType.Landed, true)
-    pcall(function() h:ChangeState(Enum.HumanoidStateType.Running) end)
 end
 
 local function stopPlayback()
@@ -1301,7 +1306,14 @@ local function stopPlayback()
     STATE.playing.active = false
     STATE.currentPlayingId = nil
     local h = getHum()
-    if h then h:Move(Vector3.zero, false); h.AutoRotate = true end
+    if h then
+        h:Move(Vector3.zero, false)
+        h.AutoRotate = true
+        h.PlatformStand = false
+        -- Re-enable state
+        h:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+        h:SetStateEnabled(Enum.HumanoidStateType.Climbing, true)
+    end
     enableControls()
     destroyTrail()
 end
@@ -1326,117 +1338,105 @@ local function playWalk(points, id)
         if not hum or not root then return end
     end
 
-    setupHumanoid(hum)
+    setupHumanoidForPlayback(hum)
     disableControls()
     STATE.playing.active = true
     STATE.currentPlayingId = id
 
-    -- ★ STATE PROGRESS
-    local currentIdx = 1
-    local lastJumpedIdx = 0
-    local lastProgress = tick()
-    local lastProgressPos = root.Position
-    local lastJump = 0
+    -- ★ TIMELINE SETUP
+    local progress = 0                       -- detik-record yang sudah dilalui
+    local totalTime = points[#points].time   -- total durasi rekaman
+    local baseSpeed = CONFIG.DEFAULT_SPEED   -- referensi speed
+    -- Speed multiplier: berapa kali lipat progress maju per detik real
+    local speedMultiplier = STATE.autoWalkSpeed / baseSpeed
 
-    -- ★ Set WalkSpeed = SPEED BOOST (langsung, tidak di-scale)
-    hum.WalkSpeed = STATE.autoWalkSpeed
+    log("Playback: " .. #points .. " waypoints, duration=" .. string.format("%.2f", totalTime) .. "s, multiplier=" .. string.format("%.2f", speedMultiplier))
 
-    log("Playback start: " .. #points .. " waypoints, WalkSpeed=" .. STATE.autoWalkSpeed)
+    -- State untuk simulate velocity
+    local prevPos = root.Position
+    local lastFrame = tick()
+    local segIdx = 1
 
-    STATE.playing.conn = RunService.Heartbeat:Connect(function()
+    STATE.playing.conn = RunService.RenderStepped:Connect(function(dt)
         if not STATE.playing.active then return end
-        local h = getHum(); local r = getRoot()
-        if not h or not r then stopPlayback(); return end
+        local r = getRoot()
+        local h = getHum()
+        if not r or not h then stopPlayback(); return end
 
-        -- ★ Update WalkSpeed (kalau user ubah slider saat playback)
-        local targetSpeed = STATE.autoWalkSpeed
-        if math.abs(h.WalkSpeed - targetSpeed) > 0.5 then
-            h.WalkSpeed = targetSpeed
-        end
+        -- ★ ADVANCE PROGRESS (roller coaster)
+        progress = progress + dt * speedMultiplier
 
-        -- ★ ADVANCE WAYPOINT BY PROXIMITY
-        -- Kalau karakter sudah dekat waypoint berikutnya, maju ke berikutnya
-        local advanced = false
-        while currentIdx < #points do
-            local nextWp = points[currentIdx + 1]
-            local d = (r.Position - nextWp.pos).Magnitude
-            if d < CONFIG.WAYPOINT_REACH_DIST then
-                currentIdx = currentIdx + 1
-                advanced = true
-            else
-                break
-            end
-        end
-
-        -- Update progress timer
-        if advanced or (r.Position - lastProgressPos).Magnitude > 0.5 then
-            lastProgress = tick()
-            lastProgressPos = r.Position
-        end
-
-        -- ★ CEK SELESAI
-        if currentIdx >= #points then
-            local finalDist = (r.Position - points[#points].pos).Magnitude
-            if finalDist < CONFIG.WAYPOINT_REACH_DIST + 1 then
-                stopPlayback()
-                refreshSavedList()
-                notify("✅ AutoWalk selesai (" .. #points .. " waypoints)", T.GREEN)
-                return
-            end
-        end
-
-        -- ★ TARGET = waypoint setelah currentIdx (lookahead)
-        local lookIdx = math.min(currentIdx + CONFIG.LOOKAHEAD, #points)
-        local target = points[lookIdx]
-        local curWp = points[currentIdx]
-
-        -- ★ JUMP HANDLING
-        -- Cek dari currentIdx sampai JUMP_LOOKAHEAD ke depan, ada state Jumping?
-        local shouldJump = false
-        local jumpIdx = nil
-        for i = math.max(currentIdx, lastJumpedIdx + 1), math.min(currentIdx + CONFIG.JUMP_LOOKAHEAD, #points) do
-            local st = normalizeState(points[i].state)
-            if st == "Jumping" then
-                shouldJump = true
-                jumpIdx = i
-                break
-            end
-        end
-
-        -- Y-diff: kalau target lebih tinggi, mungkin perlu lompat
-        local yDiff = target.pos.Y - r.Position.Y
-        if yDiff > CONFIG.Y_JUMP_THRESHOLD then
-            shouldJump = true
-        end
-
-        if shouldJump and (tick() - lastJump) > CONFIG.JUMP_COOLDOWN then
-            local cs = h:GetState()
-            local grounded = (cs == Enum.HumanoidStateType.Running)
-                          or (cs == Enum.HumanoidStateType.Landed)
-                          or (cs == Enum.HumanoidStateType.Idle)
-            if grounded then
-                h.Jump = true
-                lastJump = tick()
-                if jumpIdx then lastJumpedIdx = jumpIdx end
-            end
-        end
-
-        -- ★ MOVE KE TARGET
-        local flatCur = Vector3.new(r.Position.X, 0, r.Position.Z)
-        local flatTgt = Vector3.new(target.pos.X, 0, target.pos.Z)
-        local dir = flatTgt - flatCur
-        if dir.Magnitude > 0.5 then
-            h:Move(dir.Unit, false)
-        else
-            h:Move(Vector3.zero, false)
-        end
-        h.AutoRotate = true
-
-        -- ★ STUCK DETECTION
-        if (tick() - lastProgress) > CONFIG.STUCK_TIMEOUT then
+        if progress >= totalTime then
             stopPlayback()
-            notify("⚠ Playback stuck — dihentikan", T.RED)
+            refreshSavedList()
+            notify("✅ AutoWalk selesai", T.GREEN)
+            return
         end
+
+        -- ★ CARI SEGMEN (optimized — mulai dari segIdx)
+        while segIdx < #points - 1 and points[segIdx + 1].time < progress do
+            segIdx = segIdx + 1
+        end
+        while segIdx > 1 and points[segIdx].time > progress do
+            segIdx = segIdx - 1
+        end
+
+        local p1 = points[segIdx]
+        local p2 = points[segIdx + 1] or p1
+
+        -- ★ INTERPOLASI POSISI
+        local segDur = p2.time - p1.time
+        local alpha = segDur > 0 and ((progress - p1.time) / segDur) or 0
+        alpha = math.clamp(alpha, 0, 1)
+
+        local newPos = p1.pos:Lerp(p2.pos, alpha)
+
+        -- ★ INTERPOLASI ROTASI (shortest path)
+        local r1 = p1.rot
+        local r2 = p2.rot
+        local diff = r2 - r1
+        while diff > math.pi do diff = diff - math.pi * 2 end
+        while diff < -math.pi do diff = diff + math.pi * 2 end
+        local newRot = r1 + diff * alpha
+
+        -- ★ SET CFRAME (karakter nempel di rel)
+        r.CFrame = CFrame.new(newPos) * CFrame.Angles(0, newRot, 0)
+
+        -- ★ SIMULATE VELOCITY untuk animator (agar animasi walk muncul)
+        local now = tick()
+        local frameDelta = now - lastFrame
+        if frameDelta > 0 and frameDelta < 0.5 then
+            local velocity = (newPos - prevPos) / frameDelta
+            r.AssemblyLinearVelocity = velocity
+            -- Batasi velocity agar tidak meledak
+            if velocity.Magnitude > 200 then
+                r.AssemblyLinearVelocity = velocity.Unit * 200
+            end
+        end
+
+        -- ★ SET WALKSPEED sesuai recorded speed × multiplier
+        local recSpeed = (p1.speed and p1.speed > 0) and p1.speed or baseSpeed
+        local displaySpeed = math.clamp(recSpeed * speedMultiplier,
+            CONFIG.ANIMATION_WALKSPEED_MIN, CONFIG.ANIMATION_WALKSPEED_MAX)
+        if math.abs(h.WalkSpeed - displaySpeed) > 0.5 then
+            h.WalkSpeed = displaySpeed
+        end
+
+        -- ★ PANGGIL Move() untuk trigger animator (MoveDirection != 0 → play walk animation)
+        local lookVec = r.CFrame.LookVector
+        h:Move(lookVec, false)
+
+        -- ★ Paksa Running state (bukan Falling/Jumping)
+        local cs = h:GetState()
+        if cs ~= Enum.HumanoidStateType.Running
+        and cs ~= Enum.HumanoidStateType.Landed
+        and cs ~= Enum.HumanoidStateType.Jumping
+        and cs ~= Enum.HumanoidStateType.Freefall then
+            pcall(function() h:ChangeState(Enum.HumanoidStateType.Running) end)
+        end
+
+        prevPos = newPos
+        lastFrame = now
     end)
 end
 
@@ -1885,7 +1885,7 @@ ScreenGui.AncestryChanged:Connect(function()
 end)
 
 task.delay(0.6, function()
-    notify("✨ LuxxyHub AutoWalk v9.7 dimuat", T.PURPLE_LIGHT)
+    notify("✨ LuxxyHub AutoWalk v10 dimuat", T.PURPLE_LIGHT)
 end)
 
 log("Script loaded successfully")
