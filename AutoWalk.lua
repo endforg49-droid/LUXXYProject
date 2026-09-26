@@ -1,6 +1,6 @@
 --[[
     ╔══════════════════════════════════════════════════════╗
-    ║  LuxxyHub - AutoWalk (v10.1 - Ultra Smooth)          ║
+    ║  LuxxyHub - AutoWalk (v10.3 - Multiplier + Smooth)   ║
     ║  For Delta Executor                                   ║
     ╚══════════════════════════════════════════════════════╝
 ]]
@@ -14,7 +14,7 @@ local SoundService     = game:GetService("SoundService")
 local Debris           = game:GetService("Debris")
 local LocalPlayer      = Players.LocalPlayer
 
-local function log(msg) print("[LuxxyHub v10.1] " .. tostring(msg)) end
+local function log(msg) print("[LuxxyHub v10.3] " .. tostring(msg)) end
 log("Script started")
 
 -- ================================================================
@@ -55,18 +55,19 @@ local CONFIG = {
     FILE_NAME       = "LuxxyHub_AutoWalk_Config.json",
     RECORD_INTERVAL = 0.04,
     DEFAULT_SPEED   = 16,
-    MIN_SPEED       = 4,
-    MAX_SPEED       = 100,
+    -- ★ Multiplier: 1x sampai 10x
+    MIN_MULT        = 1,
+    MAX_MULT        = 10,
+    DEFAULT_MULT    = 1,
     BACK_SECONDS    = 2,
     HISTORY_BUFFER  = 10,
     TELEPORT_THRESHOLD = 25,
     TELEPORT_JUMP_DETECT = 30,
     REWIND_COOLDOWN = 2.0,
-    -- ★ Smooth playback
-    ANIM_WALKSPEED_MIN = 6,
-    ANIM_WALKSPEED_MAX = 100,
     SPEED_SMOOTH_SAMPLES = 6,
-    VELOCITY_MAX = 150,
+    -- ★ Smoothing playback
+    SMOOTH_ALPHA_MAX = 0.5,
+    SMOOTH_K         = 30,
     BG_IMAGE_ID      = "rbxassetid://125806010780793",
     BG_IMAGE_TRANS   = 0.75,
     BG_IMAGE_COLOR   = Color3.fromRGB(180, 140, 230),
@@ -107,7 +108,7 @@ local STATE = {
     currentPage = "MAIN",
     savedWalks = {},
     checkpoints = {},
-    autoWalkSpeed = CONFIG.DEFAULT_SPEED,
+    speedMultiplier = CONFIG.DEFAULT_MULT,   -- ★ sekarang multiplier 1-10
     recording = { active = false, points = {}, startTime = 0, conn = nil, prevPos = nil, prevTime = 0, speedBuf = {} },
     currentRecording = {},
     playing = { active = false, conn = nil },
@@ -557,6 +558,7 @@ applyGradientStroke(savedScroll, 1.5, 8)
 newInst("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, savedScroll)
 newInst("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, savedScroll)
 
+-- ★ SPEED BOOST ROW (multiplier)
 local speedRow = newInst("Frame", {
     Size = UDim2.new(1, -20, 0, 60), Position = UDim2.new(0, 10, 1, -70),
     BackgroundColor3 = T.BG_ELEMENT, BackgroundTransparency = 0.55,
@@ -572,38 +574,43 @@ newInst("TextLabel", {
 }, speedRow)
 local speedValLabel = newInst("TextLabel", {
     Size = UDim2.new(0, 70, 0, 20), Position = UDim2.new(1, -82, 0, 6),
-    BackgroundTransparency = 1, Text = tostring(CONFIG.DEFAULT_SPEED) .. " s/s",
+    BackgroundTransparency = 1, Text = "×" .. CONFIG.DEFAULT_MULT,
     TextColor3 = T.WHITE, TextSize = 11, Font = Enum.Font.GothamBold,
     TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 54,
 }, speedRow)
+
+-- ★ Slider dengan tick marks 1x-10x
 local sliderTrack = newInst("Frame", {
     Size = UDim2.new(1, -24, 0, 8), Position = UDim2.new(0, 12, 0, 38),
     BackgroundColor3 = T.BG_ELEMENT2, BorderSizePixel = 0, ZIndex = 54,
 }, speedRow)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, sliderTrack)
+
 local sliderFill = newInst("Frame", {
-    Size = UDim2.new((CONFIG.DEFAULT_SPEED - CONFIG.MIN_SPEED) / (CONFIG.MAX_SPEED - CONFIG.MIN_SPEED), 0, 1, 0),
+    Size = UDim2.new(0, 0, 1, 0),
     BackgroundColor3 = T.PURPLE, BorderSizePixel = 0, ZIndex = 55,
 }, sliderTrack)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, sliderFill)
+
 local sliderKnob = newInst("Frame", {
     Size = UDim2.new(0, 16, 0, 16),
-    Position = UDim2.new((CONFIG.DEFAULT_SPEED - CONFIG.MIN_SPEED) / (CONFIG.MAX_SPEED - CONFIG.MIN_SPEED), 0, 0.5, 0),
+    Position = UDim2.new(0, 0, 0.5, 0),
     AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundColor3 = T.WHITE, BorderSizePixel = 0, ZIndex = 56,
 }, sliderTrack)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, sliderKnob)
 
+-- INFO
 newInst("TextLabel", {
     Size = UDim2.new(1, -20, 0, 26), Position = UDim2.new(0, 10, 0, 10),
-    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk v10.1",
+    BackgroundTransparency = 1, Text = "LuxxyHub  •  AutoWalk v10.3",
     TextColor3 = T.WHITE, TextSize = 16, Font = Enum.Font.GothamBold,
     TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 53,
 }, pageInfo)
 newInst("TextLabel", {
     Size = UDim2.new(1, -20, 1, -50), Position = UDim2.new(0, 10, 0, 42),
     BackgroundTransparency = 1,
-    Text = "📢 INFO v10.1\n\n• Ultra smooth playback (PlatformStand)\n• Auto-detect speed player saat record\n• Roller coaster path following\n• Trail Recording\n• Auto-Rewind\n\nSpeed Boost:\n- 16 = normal\n- 32 = 2x lebih cepat\n- 64 = 4x lebih cepat",
+    Text = "📢 INFO v10.3\n\n• Speed Boost ×1 sampai ×10\n• Auto-detect speed player saat record\n• Playback smooth (lerp interpolation)\n• Animasi Roblox normal\n• Anti-blink\n\nContoh:\n- Record speed 60, ×1 → 60 studs/s\n- Record speed 60, ×2 → 120 studs/s\n- Record speed 60, ×5 → 300 studs/s",
     TextColor3 = T.TEXT_DIM, TextSize = 12, Font = Enum.Font.Gotham,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, ZIndex = 53,
@@ -852,6 +859,51 @@ local countdownLabel = newInst("TextLabel", {
 newInst("UICorner", { CornerRadius = UDim.new(0, 12) }, countdownLabel)
 
 -- ================================================================
+-- ★ SPEED SLIDER (multiplier 1x-10x)
+-- ================================================================
+local function updateSliderVisual(mult)
+    mult = math.clamp(mult, CONFIG.MIN_MULT, CONFIG.MAX_MULT)
+    STATE.speedMultiplier = mult
+    local range = CONFIG.MAX_MULT - CONFIG.MIN_MULT
+    local alpha = (mult - CONFIG.MIN_MULT) / range
+    sliderFill.Size = UDim2.new(alpha, 0, 1, 0)
+    sliderKnob.Position = UDim2.new(alpha, 0, 0.5, 0)
+    speedValLabel.Text = "×" .. mult
+end
+
+local function updateSliderFromInput(inputX)
+    local trackAbs = sliderTrack.AbsolutePosition.X
+    local trackW = sliderTrack.AbsoluteSize.X
+    if trackW <= 0 then return end
+    local alpha = math.clamp((inputX - trackAbs) / trackW, 0, 1)
+    local mult = math.floor(CONFIG.MIN_MULT + alpha * (CONFIG.MAX_MULT - CONFIG.MIN_MULT) + 0.5)
+    updateSliderVisual(mult)
+end
+
+updateSliderVisual(CONFIG.DEFAULT_MULT)
+
+local draggingSlider = false
+sliderTrack.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        draggingSlider = true
+        updateSliderFromInput(input.Position.X)
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement
+    or input.UserInputType == Enum.UserInputType.Touch) then
+        updateSliderFromInput(input.Position.X)
+    end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        if draggingSlider then draggingSlider = false; saveConfig(true) end
+    end
+end)
+
+-- ================================================================
 -- SIDEBAR SWITCH
 -- ================================================================
 local function switchPage(id)
@@ -901,6 +953,12 @@ end
 local function normalizeState(s)
     if not s then return "Running" end
     return tostring(s):gsub("Enum%.HumanoidStateType%.", "")
+end
+local function shortestAngle(from, to)
+    local diff = to - from
+    while diff > math.pi do diff = diff - math.pi * 2 end
+    while diff < -math.pi do diff = diff + math.pi * 2 end
+    return diff
 end
 
 -- ================================================================
@@ -995,7 +1053,7 @@ end)
 updateTrailToggleVisual()
 
 -- ================================================================
--- ★★★ RECORD — AUTO-DETECT SPEED PLAYER ★★★
+-- RECORD
 -- ================================================================
 local function startRecording()
     if STATE.recording.active then return end
@@ -1018,7 +1076,7 @@ local function startRecording()
         local last = STATE.recording.points[#STATE.recording.points]
         if last and (nowRel - last.time) < CONFIG.RECORD_INTERVAL then return end
 
-        -- ★ HITUNG KECEPATAN AKTUAL (dari delta posisi)
+        -- Hitung kecepatan aktual
         local actualSpeed = 0
         if STATE.recording.prevPos then
             local dtReal = now - STATE.recording.prevTime
@@ -1030,7 +1088,6 @@ local function startRecording()
         STATE.recording.prevPos = root.Position
         STATE.recording.prevTime = now
 
-        -- ★ SMOOTH KECEPATAN (moving average, 6 sample terakhir)
         if actualSpeed > 0 then
             table.insert(STATE.recording.speedBuf, actualSpeed)
             if #STATE.recording.speedBuf > CONFIG.SPEED_SMOOTH_SAMPLES then
@@ -1044,12 +1101,7 @@ local function startRecording()
             smoothSpeed = sum / #STATE.recording.speedBuf
         end
 
-        -- ★ INPUT SPEED (dari Humanoid.WalkSpeed)
         local inputSpeed = hum.WalkSpeed
-
-        -- ★ KECEPATAN FINAL = gabungan
-        -- Kalau actualSpeed > 0 dan signifikan, pakai aktual (karena itu yang benar-benar terjadi)
-        -- Kalau tidak, fallback ke input speed
         local finalSpeed
         if smoothSpeed > 1 then
             finalSpeed = smoothSpeed
@@ -1058,7 +1110,6 @@ local function startRecording()
         end
         finalSpeed = math.clamp(finalSpeed, 1, 300)
 
-        -- State karakter
         local _, yRot = root.CFrame:ToOrientation()
         local st = hum:GetState()
         local stName = "Running"
@@ -1068,14 +1119,10 @@ local function startRecording()
         elseif st == Enum.HumanoidStateType.Swimming then stName = "Swimming" end
 
         table.insert(STATE.recording.points, {
-            pos = root.Position,
-            rot = yRot,
-            time = nowRel,
-            speed = finalSpeed,      -- ★ auto-detected speed
-            state = stName,
+            pos = root.Position, rot = yRot, time = nowRel,
+            speed = finalSpeed, state = stName,
         })
 
-        -- Stats
         local totalDist = 0
         for i = 2, #STATE.recording.points do
             totalDist = totalDist + (STATE.recording.points[i].pos - STATE.recording.points[i - 1].pos).Magnitude
@@ -1118,17 +1165,18 @@ recToggle.Activated:Connect(function()
 end)
 
 -- ================================================================
--- ★★★ PLAYBACK v10.1 — ULTRA SMOOTH (PlatformStand + RenderStepped) ★★★
+-- ★★★ PLAYBACK v10.3 — Smooth Lerp (Anti-Blink) ★★★
 -- ================================================================
 local function setupHumanoidForPlayback(h)
     if not h then return end
     h.AutoRotate = false
-    h.UseJumpPower = true
-    h.PlatformStand = true      -- ★ MATIKAN physics interference → anti-blink
-    h:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
-    h:SetStateEnabled(Enum.HumanoidStateType.Climbing, false)
-    h:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-    h:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+    h.PlatformStand = false
+    h.Sit = false
+    h:SetStateEnabled(Enum.HumanoidStateType.Running, true)
+    h:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+    h:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
+    h:SetStateEnabled(Enum.HumanoidStateType.Landed, true)
+    h:SetStateEnabled(Enum.HumanoidStateType.Climbing, true)
 end
 
 local function stopPlayback()
@@ -1139,11 +1187,7 @@ local function stopPlayback()
     if h then
         h:Move(Vector3.zero, false)
         h.AutoRotate = true
-        h.PlatformStand = false       -- ★ balik normal
-        h:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
-        h:SetStateEnabled(Enum.HumanoidStateType.Climbing, true)
-        h:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
-        h:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+        h.WalkSpeed = CONFIG.DEFAULT_SPEED
     end
     local r = getRoot()
     if r then
@@ -1165,11 +1209,11 @@ local function playWalk(points, id)
     stopPlayback()
     destroyTrail()
 
-    -- Teleport ke waypoint awal
+    -- Teleport ke waypoint pertama kalau jauh
     local first = points[1]
     if (root.Position - first.pos).Magnitude > CONFIG.TELEPORT_THRESHOLD then
-        root.CFrame = CFrame.new(first.pos + Vector3.new(0, 2, 0)) * CFrame.Angles(0, first.rot, 0)
-        task.wait(0.2)
+        root.CFrame = CFrame.new(first.pos + Vector3.new(0, 3, 0)) * CFrame.Angles(0, first.rot, 0)
+        task.wait(0.3)
         hum = getHum(); root = getRoot()
         if not hum or not root then return end
     end
@@ -1181,21 +1225,24 @@ local function playWalk(points, id)
 
     local progress = 0
     local totalTime = points[#points].time
-    local speedMultiplier = STATE.autoWalkSpeed / CONFIG.DEFAULT_SPEED
-    local segIdx = 1
-    local lastAppliedPos = root.Position
+    local multiplier = STATE.speedMultiplier     -- ★ pakai multiplier
+    local lastJumpIdx = 0
+    local lastProgressTime = tick()
+    local lastProgressPos = root.Position
+    local JUMP_CHECK_RANGE = 4
+    local STUCK_TIMEOUT = 6
 
-    log("Playback v10.1: " .. #points .. " wp, dur=" .. string.format("%.2f", totalTime) .. "s, mult=" .. string.format("%.2f", speedMultiplier))
+    log("Playback v10.3: " .. #points .. " wp, dur=" .. string.format("%.2f", totalTime) .. "s, mult=×" .. multiplier)
 
-    STATE.playing.conn = RunService.RenderStepped:Connect(function(dt)
+    STATE.playing.conn = RunService.Stepped:Connect(function(_, dt)
         if not STATE.playing.active then return end
+        if dt <= 0 then return end
         local r = getRoot()
         local h = getHum()
         if not r or not h then stopPlayback(); return end
 
-        -- ★ ADVANCE PROGRESS
-        progress = progress + dt * speedMultiplier
-
+        -- ★ PROGRESS
+        progress = progress + dt * multiplier
         if progress >= totalTime then
             stopPlayback()
             refreshSavedList()
@@ -1203,59 +1250,74 @@ local function playWalk(points, id)
             return
         end
 
-        -- ★ FIND SEGMENT (dengan pointer geser)
-        while segIdx < #points - 1 and points[segIdx + 1].time < progress do
-            segIdx = segIdx + 1
+        -- ★ CARI WAYPOINT (by time)
+        local idx = 1
+        for i = 1, #points do
+            if points[i].time >= progress then idx = i; break end
         end
-        while segIdx > 1 and points[segIdx].time > progress do
-            segIdx = segIdx - 1
-        end
+        if idx >= #points then idx = #points - 1 end
 
-        local p1 = points[segIdx]
-        local p2 = points[segIdx + 1] or p1
+        local p1 = points[idx]
+        local p2 = points[idx + 1] or p1
 
-        -- ★ INTERPOLASI
+        -- ★ INTERPOLASI dengan smoothstep
         local segDur = p2.time - p1.time
-        local alpha = segDur > 0 and ((progress - p1.time) / segDur) or 0
-        alpha = math.clamp(alpha, 0, 1)
+        local rawAlpha = segDur > 0 and ((progress - p1.time) / segDur) or 0
+        rawAlpha = math.clamp(rawAlpha, 0, 1)
+        local alpha = rawAlpha * rawAlpha * (3 - 2 * rawAlpha)   -- smoothstep
 
-        -- ★ SMOOTHING INTERPOLASI (ease in-out biar tidak patah-patah)
-        local smoothAlpha = alpha * alpha * (3 - 2 * alpha)   -- smoothstep
+        local targetPos = p1.pos:Lerp(p2.pos, alpha)
+        local targetRot = p1.rot + shortestAngle(p1.rot, p2.rot) * alpha
 
-        local newPos = p1.pos:Lerp(p2.pos, smoothAlpha)
+        -- ★ Smooth lerp ke target (anti blink)
+        local targetCF = CFrame.new(targetPos) * CFrame.Angles(0, targetRot, 0)
+        local smoothAlpha = math.min(CONFIG.SMOOTH_ALPHA_MAX, dt * CONFIG.SMOOTH_K)
+        r.CFrame = r.CFrame:Lerp(targetCF, smoothAlpha)
 
-        -- ★ ROTASI interpolasi shortest
-        local r1 = p1.rot
-        local r2 = p2.rot
-        local diff = r2 - r1
-        while diff > math.pi do diff = diff - math.pi * 2 end
-        while diff < -math.pi do diff = diff + math.pi * 2 end
-        local newRot = r1 + diff * smoothAlpha
+        -- ★ Reset velocity supaya physics tidak "meluncur"
+        r.AssemblyLinearVelocity = Vector3.zero
+        r.AssemblyAngularVelocity = Vector3.zero
 
-        -- ★ SET CFRAME (langsung, physics dimatikan)
-        r.CFrame = CFrame.new(newPos) * CFrame.Angles(0, newRot, 0)
-
-        -- ★ SIMULATE VELOCITY — kecil saja biar animator lihat gerakan, tapi tidak trigger anti-cheat
-        if dt > 0 then
-            local velocity = (newPos - lastAppliedPos) / dt
-            local mag = velocity.Magnitude
-            if mag > CONFIG.VELOCITY_MAX then
-                velocity = velocity.Unit * CONFIG.VELOCITY_MAX
-            end
-            r.AssemblyLinearVelocity = velocity
-        end
-        lastAppliedPos = newPos
-
-        -- ★ SET WALKSPEED (untuk animator)
+        -- ★ SET WalkSpeed untuk animasi
         local recSpeed = (p1.speed and p1.speed > 0) and p1.speed or CONFIG.DEFAULT_SPEED
-        local animSpeed = math.clamp(recSpeed * speedMultiplier,
-            CONFIG.ANIM_WALKSPEED_MIN, CONFIG.ANIM_WALKSPEED_MAX)
+        local animSpeed = math.clamp(recSpeed * multiplier, 6, 200)
         if math.abs(h.WalkSpeed - animSpeed) > 0.5 then
             h.WalkSpeed = animSpeed
         end
 
-        -- ★ TRIGGER ANIMASI WALK
-        h:Move(r.CFrame.LookVector, false)
+        -- ★ TRIGGER ANIMASI: Move dengan arah target
+        local dir = targetPos - r.Position
+        local flatDir = Vector3.new(dir.X, 0, dir.Z)
+        if flatDir.Magnitude > 0.1 then
+            h:Move(flatDir.Unit, false)
+        else
+            h:Move(Vector3.zero, false)
+        end
+
+        -- ★ JUMP HANDLING
+        for i = math.max(idx, lastJumpIdx + 1), math.min(idx + JUMP_CHECK_RANGE, #points) do
+            local st = normalizeState(points[i].state)
+            if st == "Jumping" then
+                local cs = h:GetState()
+                local grounded = (cs == Enum.HumanoidStateType.Running)
+                              or (cs == Enum.HumanoidStateType.Landed)
+                              or (cs == Enum.HumanoidStateType.Idle)
+                if grounded then
+                    h.Jump = true
+                    lastJumpIdx = i
+                end
+                break
+            end
+        end
+
+        -- ★ STUCK DETECTION
+        if (r.Position - lastProgressPos).Magnitude > 0.5 then
+            lastProgressTime = tick()
+            lastProgressPos = r.Position
+        elseif (tick() - lastProgressTime) > STUCK_TIMEOUT then
+            stopPlayback()
+            notify("⚠ Playback stuck — dihentikan", T.RED)
+        end
     end)
 end
 
@@ -1291,7 +1353,7 @@ backBtn.Activated:Connect(function()
     local hum = getHum()
     if hum then
         hum.WalkSpeed = 0
-        showCountdown(function() if hum then hum.WalkSpeed = STATE.autoWalkSpeed end end)
+        showCountdown(function() if hum then hum.WalkSpeed = CONFIG.DEFAULT_SPEED end end)
     else showCountdown(nil) end
 end)
 
@@ -1338,7 +1400,12 @@ local function saveConfig(silent)
         for _, p in ipairs(w.points or {}) do table.insert(pts, compressPoint(p)) end
         table.insert(walksData, { n = w.name, pts = pts })
     end
-    local data = { walks = walksData, speed = STATE.autoWalkSpeed, autoRewind = STATE.autoRewindEnabled, trailEnabled = STATE.trailEnabled }
+    local data = {
+        walks = walksData,
+        multiplier = STATE.speedMultiplier,     -- ★ simpan multiplier
+        autoRewind = STATE.autoRewindEnabled,
+        trailEnabled = STATE.trailEnabled,
+    }
     pcall(function()
         if typeof(writefile) == "function" then
             writefile(CONFIG.FILE_NAME, HttpService:JSONEncode(data))
@@ -1372,12 +1439,11 @@ local function loadConfig()
         end
         notify("📂 " .. #STATE.savedWalks .. " walk dimuat", T.GREEN)
     end
-    if data.speed then
-        STATE.autoWalkSpeed = data.speed
-        local alpha = math.clamp((data.speed - CONFIG.MIN_SPEED) / (CONFIG.MAX_SPEED - CONFIG.MIN_SPEED), 0, 1)
-        sliderFill.Size = UDim2.new(alpha, 0, 1, 0)
-        sliderKnob.Position = UDim2.new(alpha, 0, 0.5, 0)
-        speedValLabel.Text = tostring(data.speed) .. " s/s"
+    -- ★ Load multiplier
+    local mult = data.multiplier or data.speed
+    if mult then
+        mult = math.clamp(math.floor(mult + 0.5), CONFIG.MIN_MULT, CONFIG.MAX_MULT)
+        updateSliderVisual(mult)
     end
     if data.autoRewind ~= nil then
         STATE.autoRewindEnabled = data.autoRewind
@@ -1571,7 +1637,7 @@ confirmSaveBtn.Activated:Connect(function()
             pendingAction = nil
             return
         end
-        table.insert(STATE.savedWalks, { name = name, points = combined, speed = STATE.autoWalkSpeed })
+        table.insert(STATE.savedWalks, { name = name, points = combined, speed = STATE.speedMultiplier })
         notify("🔗 Combined (" .. #STATE.checkpoints .. " CP → " .. #combined .. " pts)", T.GREEN)
         STATE.checkpoints = {}
         refreshCpList()
@@ -1584,7 +1650,7 @@ confirmSaveBtn.Activated:Connect(function()
             pendingAction = nil
             return
         end
-        table.insert(STATE.savedWalks, { name = name, points = pts, speed = STATE.autoWalkSpeed })
+        table.insert(STATE.savedWalks, { name = name, points = pts, speed = STATE.speedMultiplier })
         notify("💾 Walk tersimpan: " .. name, T.GREEN)
     end
     refreshSavedList()
@@ -1592,42 +1658,6 @@ confirmSaveBtn.Activated:Connect(function()
     nameInput.Visible = false
     confirmSaveBtn.Visible = false
     pendingAction = nil
-end)
-
--- ================================================================
--- SPEED SLIDER
--- ================================================================
-local function updateSliderFromInput(inputX)
-    local trackAbs = sliderTrack.AbsolutePosition.X
-    local trackW = sliderTrack.AbsoluteSize.X
-    if trackW <= 0 then return end
-    local alpha = math.clamp((inputX - trackAbs) / trackW, 0, 1)
-    local val = math.floor(CONFIG.MIN_SPEED + alpha * (CONFIG.MAX_SPEED - CONFIG.MIN_SPEED))
-    STATE.autoWalkSpeed = val
-    sliderFill.Size = UDim2.new(alpha, 0, 1, 0)
-    sliderKnob.Position = UDim2.new(alpha, 0, 0.5, 0)
-    speedValLabel.Text = tostring(val) .. " s/s"
-end
-
-local draggingSlider = false
-sliderTrack.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        draggingSlider = true
-        updateSliderFromInput(input.Position.X)
-    end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement
-    or input.UserInputType == Enum.UserInputType.Touch) then
-        updateSliderFromInput(input.Position.X)
-    end
-end)
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        if draggingSlider then draggingSlider = false; saveConfig(true) end
-    end
 end)
 
 -- ================================================================
@@ -1704,7 +1734,7 @@ ScreenGui.AncestryChanged:Connect(function()
 end)
 
 task.delay(0.6, function()
-    notify("✨ LuxxyHub AutoWalk v10.1 dimuat", T.PURPLE_LIGHT)
+    notify("✨ LuxxyHub AutoWalk v10.3 dimuat", T.PURPLE_LIGHT)
 end)
 
 log("Script loaded successfully")
