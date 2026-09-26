@@ -1,6 +1,6 @@
 --[[
     ╔══════════════════════════════════════════════════════╗
-    ║  LuxxyHub - AutoWalk (v9.6 - Playback Fix)           ║
+    ║  LuxxyHub - AutoWalk (v9.7 - Perfect Follow Path)    ║
     ║  For Delta Executor                                   ║
     ╚══════════════════════════════════════════════════════╝
 ]]
@@ -17,7 +17,7 @@ local SoundService     = game:GetService("SoundService")
 local Debris           = game:GetService("Debris")
 local LocalPlayer      = Players.LocalPlayer
 
-local function log(msg) print("[LuxxyHub v9.6] " .. tostring(msg)) end
+local function log(msg) print("[LuxxyHub v9.7] " .. tostring(msg)) end
 log("Script started")
 
 -- ================================================================
@@ -65,22 +65,22 @@ local CONFIG = {
     RECORD_INTERVAL = 0.05,
     DEFAULT_SPEED   = 16,
     MIN_SPEED       = 4,
-    MAX_SPEED       = 60,
+    MAX_SPEED       = 100,
     BACK_SECONDS    = 2,
     HISTORY_BUFFER  = 10,
-    WAYPOINT_LOOKAHEAD = 2,
     TELEPORT_THRESHOLD = 25,
     TELEPORT_JUMP_DETECT = 30,
-    JUMP_COOLDOWN   = 0.5,
+    JUMP_COOLDOWN   = 0.4,
     Y_JUMP_THRESHOLD = 1.5,
     REWIND_COOLDOWN = 2.0,
-    -- ★ RESYNC
-    RESYNC_DISTANCE = 15,
-    RESYNC_RANGE    = 30,
+    -- ★ Playback tuning
+    WAYPOINT_REACH_DIST = 3,      -- jarak untuk anggap waypoint "reached"
+    LOOKAHEAD           = 2,      -- waypoint lookahead untuk target gerak
+    STUCK_TIMEOUT       = 5,      -- detik stuck sebelum stop
+    JUMP_LOOKAHEAD      = 3,      -- cek jump sampai N waypoint ke depan
     BG_IMAGE_ID      = "rbxassetid://125806010780793",
     BG_IMAGE_TRANS   = 0.75,
     BG_IMAGE_COLOR   = Color3.fromRGB(180, 140, 230),
-    -- ★ TRAIL CONFIG
     TRAIL_LIFETIME   = 999,
     TRAIL_THICKNESS  = 0.8,
     TRAIL_COLOR_1    = Color3.fromRGB(88, 30, 160),
@@ -356,7 +356,7 @@ addBgImage(mainFrame, 14)
 applyGradientStroke(mainFrame, 2, 14)
 
 -- ================================================================
--- TRAIL SYSTEM
+-- TRAIL
 -- ================================================================
 local function destroyTrail()
     if STATE.trail then
@@ -374,27 +374,15 @@ local function createTrail()
     destroyTrail()
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
-
     local halfT = (CONFIG.TRAIL_THICKNESS or 0.8) / 2
-
-    local a0 = newInst("Attachment", {
-        Name = "LuxxyTrailA0",
-        Position = Vector3.new(0, halfT, 0),
-    }, root)
-    local a1 = newInst("Attachment", {
-        Name = "LuxxyTrailA1",
-        Position = Vector3.new(0, -halfT, 0),
-    }, root)
-
+    local a0 = newInst("Attachment", { Name = "LuxxyTrailA0", Position = Vector3.new(0, halfT, 0) }, root)
+    local a1 = newInst("Attachment", { Name = "LuxxyTrailA1", Position = Vector3.new(0, -halfT, 0) }, root)
     local trail = newInst("Trail", {
         Name = "LuxxyTrail",
-        Attachment0 = a0,
-        Attachment1 = a1,
+        Attachment0 = a0, Attachment1 = a1,
         Lifetime = CONFIG.TRAIL_LIFETIME,
-        MinLength = 0,
-        FaceCamera = true,
-        LightEmission = 0.6,
-        LightInfluence = 0,
+        MinLength = 0, FaceCamera = true,
+        LightEmission = 0.6, LightInfluence = 0,
         WidthScale = NumberSequence.new(1),
         Color = ColorSequence.new({
             ColorSequenceKeypoint.new(0.00, CONFIG.TRAIL_COLOR_1),
@@ -408,10 +396,8 @@ local function createTrail()
         }),
         Enabled = true,
     }, root)
-
     STATE.trail = trail
     STATE.trailAttachments = { a0, a1 }
-    log("Trail created")
 end
 
 -- ================================================================
@@ -664,7 +650,7 @@ newInst("TextLabel", {
     Size = UDim2.new(1, -80, 0, 20),
     Position = UDim2.new(0, 12, 0, 6),
     BackgroundTransparency = 1,
-    Text = "AUTO WALK SPEED",
+    Text = "SPEED BOOST",
     TextColor3 = T.PURPLE_LIGHT,
     TextSize = 11,
     Font = Enum.Font.GothamBold,
@@ -716,7 +702,7 @@ newInst("TextLabel", {
     Size = UDim2.new(1, -20, 0, 26),
     Position = UDim2.new(0, 10, 0, 10),
     BackgroundTransparency = 1,
-    Text = "LuxxyHub  •  AutoWalk v9.6",
+    Text = "LuxxyHub  •  AutoWalk v9.7",
     TextColor3 = T.WHITE,
     TextSize = 16,
     Font = Enum.Font.GothamBold,
@@ -728,7 +714,7 @@ newInst("TextLabel", {
     Size = UDim2.new(1, -20, 1, -50),
     Position = UDim2.new(0, 10, 0, 42),
     BackgroundTransparency = 1,
-    Text = "📢 INFO v9.6\n\n• ✨ Trail Recording\n• Playback fix (jalan sesuai jalur)\n• Auto-resync saat kepenceng\n• BG image di UI\n• Auto-Rewind teleport protection\n• Checkpoint + Combine\n\nTips: atur AUTO WALK SPEED di tengah\n(20-35) untuk hasil paling akurat.",
+    Text = "📢 INFO v9.7\n\n• 100% follow path (proximity-based)\n• SPEED BOOST = WalkSpeed only\n• Tidak mengubah timing recording\n• Trail saat recording\n• Auto-Rewind teleport protection\n\nSpeed Boost = seberapa cepat karakter\nberjalan. Semakin tinggi = playback\nselesai lebih cepat.",
     TextColor3 = T.TEXT_DIM,
     TextSize = 12,
     Font = Enum.Font.Gotham,
@@ -841,7 +827,6 @@ local arRow = newInst("Frame", {
 arRow.LayoutOrder = 1
 newInst("UICorner", { CornerRadius = UDim.new(0, 8) }, arRow)
 applyGradientStroke(arRow, 1, 8)
-
 newInst("TextLabel", {
     Size = UDim2.new(1, -70, 1, 0),
     Position = UDim2.new(0, 12, 0, 0),
@@ -853,69 +838,51 @@ newInst("TextLabel", {
     TextXAlignment = Enum.TextXAlignment.Left,
     ZIndex = 203,
 }, arRow)
-
 local arToggle = newInst("TextButton", {
     Size = UDim2.new(0, 48, 0, 24),
     Position = UDim2.new(1, -56, 0.5, -12),
     BackgroundColor3 = T.PURPLE,
-    BorderSizePixel = 0,
-    Text = "",
-    AutoButtonColor = false,
-    Active = true,
-    ZIndex = 204,
+    BorderSizePixel = 0, Text = "",
+    AutoButtonColor = false, Active = true, ZIndex = 204,
 }, arRow)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, arToggle)
-
 local arKnob = newInst("Frame", {
     Size = UDim2.new(0, 18, 0, 18),
     Position = UDim2.new(1, -21, 0.5, -9),
-    BackgroundColor3 = T.WHITE,
-    BorderSizePixel = 0,
-    ZIndex = 205,
+    BackgroundColor3 = T.WHITE, BorderSizePixel = 0, ZIndex = 205,
 }, arToggle)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, arKnob)
 
--- TRAIL TOGGLE
+-- TRAIL
 local trailRow = newInst("Frame", {
     Size = UDim2.new(1, 0, 0, 34),
     BackgroundColor3 = T.BG_ELEMENT,
-    BorderSizePixel = 0,
-    ZIndex = 202,
+    BorderSizePixel = 0, ZIndex = 202,
 }, miniBody)
 trailRow.LayoutOrder = 2
 newInst("UICorner", { CornerRadius = UDim.new(0, 8) }, trailRow)
 applyGradientStroke(trailRow, 1, 8)
-
 newInst("TextLabel", {
     Size = UDim2.new(1, -70, 1, 0),
     Position = UDim2.new(0, 12, 0, 0),
     BackgroundTransparency = 1,
     Text = "✨ SHOW TRAIL",
     TextColor3 = T.PURPLE_LIGHT,
-    TextSize = 11,
-    Font = Enum.Font.GothamBold,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    ZIndex = 203,
+    TextSize = 11, Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 203,
 }, trailRow)
-
 local trailToggle = newInst("TextButton", {
     Size = UDim2.new(0, 48, 0, 24),
     Position = UDim2.new(1, -56, 0.5, -12),
     BackgroundColor3 = T.PURPLE,
-    BorderSizePixel = 0,
-    Text = "",
-    AutoButtonColor = false,
-    Active = true,
-    ZIndex = 204,
+    BorderSizePixel = 0, Text = "",
+    AutoButtonColor = false, Active = true, ZIndex = 204,
 }, trailRow)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, trailToggle)
-
 local trailKnob = newInst("Frame", {
     Size = UDim2.new(0, 18, 0, 18),
     Position = UDim2.new(1, -21, 0.5, -9),
-    BackgroundColor3 = T.WHITE,
-    BorderSizePixel = 0,
-    ZIndex = 205,
+    BackgroundColor3 = T.WHITE, BorderSizePixel = 0, ZIndex = 205,
 }, trailToggle)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, trailKnob)
 
@@ -923,42 +890,30 @@ newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, trailKnob)
 local recRow = newInst("Frame", {
     Size = UDim2.new(1, 0, 0, 34),
     BackgroundColor3 = T.BG_ELEMENT,
-    BorderSizePixel = 0,
-    ZIndex = 202,
+    BorderSizePixel = 0, ZIndex = 202,
 }, miniBody)
 recRow.LayoutOrder = 3
 newInst("UICorner", { CornerRadius = UDim.new(0, 8) }, recRow)
-
 newInst("TextLabel", {
     Size = UDim2.new(1, -70, 1, 0),
     Position = UDim2.new(0, 12, 0, 0),
     BackgroundTransparency = 1,
-    Text = "RECORD",
-    TextColor3 = T.WHITE,
-    TextSize = 12,
-    Font = Enum.Font.GothamBold,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    ZIndex = 203,
+    Text = "RECORD", TextColor3 = T.WHITE,
+    TextSize = 12, Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 203,
 }, recRow)
-
 local recToggle = newInst("TextButton", {
     Size = UDim2.new(0, 48, 0, 24),
     Position = UDim2.new(1, -56, 0.5, -12),
     BackgroundColor3 = T.BG_ELEMENT2,
-    BorderSizePixel = 0,
-    Text = "",
-    AutoButtonColor = false,
-    Active = true,
-    ZIndex = 204,
+    BorderSizePixel = 0, Text = "",
+    AutoButtonColor = false, Active = true, ZIndex = 204,
 }, recRow)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, recToggle)
-
 local recKnob = newInst("Frame", {
     Size = UDim2.new(0, 18, 0, 18),
     Position = UDim2.new(0, 3, 0.5, -9),
-    BackgroundColor3 = T.WHITE,
-    BorderSizePixel = 0,
-    ZIndex = 205,
+    BackgroundColor3 = T.WHITE, BorderSizePixel = 0, ZIndex = 205,
 }, recToggle)
 newInst("UICorner", { CornerRadius = UDim.new(1, 0) }, recKnob)
 
@@ -966,11 +921,9 @@ local statsLabel = newInst("TextLabel", {
     Size = UDim2.new(1, 0, 0, 16),
     BackgroundTransparency = 1,
     Text = "0.0 studs  •  0.00 s  •  0 pts",
-    TextColor3 = T.TEXT_DIM,
-    TextSize = 10,
+    TextColor3 = T.TEXT_DIM, TextSize = 10,
     Font = Enum.Font.Gotham,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    ZIndex = 202,
+    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 202,
 }, miniBody)
 statsLabel.LayoutOrder = 4
 
@@ -979,53 +932,42 @@ local backBtn = newInst("TextButton", {
     BackgroundColor3 = T.BG_ELEMENT,
     BorderSizePixel = 0,
     Text = "⏪  BACK 2 SECONDS",
-    TextColor3 = T.WHITE,
-    TextSize = 11,
-    Font = Enum.Font.GothamBold,
-    AutoButtonColor = false,
-    Active = true,
-    ZIndex = 202,
+    TextColor3 = T.WHITE, TextSize = 11,
+    Font = Enum.Font.GothamBold, AutoButtonColor = false,
+    Active = true, ZIndex = 202,
 }, miniBody)
 backBtn.LayoutOrder = 5
 newInst("UICorner", { CornerRadius = UDim.new(0, 8) }, backBtn)
 applyGradientStroke(backBtn, 1, 8)
 
+-- CHECKPOINTS
 local cpSection = newInst("Frame", {
     Size = UDim2.new(1, 0, 0, 20),
-    BackgroundTransparency = 1,
-    ZIndex = 202,
+    BackgroundTransparency = 1, ZIndex = 202,
 }, miniBody)
 cpSection.LayoutOrder = 6
-
 newInst("TextLabel", {
     Size = UDim2.new(0.6, 0, 1, 0),
     BackgroundTransparency = 1,
     Text = "📍 CHECKPOINTS",
-    TextColor3 = T.GOLD,
-    TextSize = 10,
+    TextColor3 = T.GOLD, TextSize = 10,
     Font = Enum.Font.GothamBold,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    ZIndex = 203,
+    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 203,
 }, cpSection)
-
 local cpCountLabel = newInst("TextLabel", {
     Size = UDim2.new(0.4, 0, 1, 0),
     Position = UDim2.new(0.6, 0, 0, 0),
-    BackgroundTransparency = 1,
-    Text = "0 CP",
-    TextColor3 = T.TEXT_DIM,
-    TextSize = 10,
+    BackgroundTransparency = 1, Text = "0 CP",
+    TextColor3 = T.TEXT_DIM, TextSize = 10,
     Font = Enum.Font.Gotham,
-    TextXAlignment = Enum.TextXAlignment.Right,
-    ZIndex = 203,
+    TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 203,
 }, cpSection)
 
 local cpScroll = newInst("ScrollingFrame", {
     Size = UDim2.new(1, 0, 0, 80),
     BackgroundColor3 = T.BG_DARK,
     BackgroundTransparency = 0.5,
-    BorderSizePixel = 0,
-    ScrollBarThickness = 3,
+    BorderSizePixel = 0, ScrollBarThickness = 3,
     ScrollBarImageColor3 = T.PURPLE,
     CanvasSize = UDim2.new(0, 0, 0, 0),
     AutomaticCanvasSize = Enum.AutomaticSize.Y,
@@ -1039,22 +981,16 @@ newInst("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 
 
 local cpActionRow = newInst("Frame", {
     Size = UDim2.new(1, 0, 0, 30),
-    BackgroundTransparency = 1,
-    ZIndex = 202,
+    BackgroundTransparency = 1, ZIndex = 202,
 }, miniBody)
 cpActionRow.LayoutOrder = 8
-
 local setCpBtn = newInst("TextButton", {
     Size = UDim2.new(0.49, 0, 1, 0),
     BackgroundColor3 = T.BG_ELEMENT,
-    BorderSizePixel = 0,
-    Text = "📍 SET CP",
-    TextColor3 = T.GOLD,
-    TextSize = 11,
-    Font = Enum.Font.GothamBold,
-    AutoButtonColor = false,
-    Active = true,
-    ZIndex = 203,
+    BorderSizePixel = 0, Text = "📍 SET CP",
+    TextColor3 = T.GOLD, TextSize = 11,
+    Font = Enum.Font.GothamBold, AutoButtonColor = false,
+    Active = true, ZIndex = 203,
 }, cpActionRow)
 newInst("UICorner", { CornerRadius = UDim.new(0, 8) }, setCpBtn)
 applyGradientStroke(setCpBtn, 1, 8)
@@ -1062,37 +998,26 @@ applyGradientStroke(setCpBtn, 1, 8)
 local combineCpBtn = newInst("TextButton", {
     Size = UDim2.new(0.49, 0, 1, 0),
     Position = UDim2.new(0.51, 0, 0, 0),
-    BackgroundColor3 = T.PURPLE,
-    BorderSizePixel = 0,
-    Text = "🔗 COMBINE",
-    TextColor3 = T.WHITE,
-    TextSize = 11,
-    Font = Enum.Font.GothamBold,
-    AutoButtonColor = false,
-    Active = true,
-    ZIndex = 203,
+    BackgroundColor3 = T.PURPLE, BorderSizePixel = 0,
+    Text = "🔗 COMBINE", TextColor3 = T.WHITE,
+    TextSize = 11, Font = Enum.Font.GothamBold,
+    AutoButtonColor = false, Active = true, ZIndex = 203,
 }, cpActionRow)
 newInst("UICorner", { CornerRadius = UDim.new(0, 8) }, combineCpBtn)
 applyGradientStroke(combineCpBtn, 1, 8)
 
 local saveClearRow = newInst("Frame", {
     Size = UDim2.new(1, 0, 0, 30),
-    BackgroundTransparency = 1,
-    ZIndex = 202,
+    BackgroundTransparency = 1, ZIndex = 202,
 }, miniBody)
 saveClearRow.LayoutOrder = 9
-
 local saveWalkBtn = newInst("TextButton", {
     Size = UDim2.new(0.49, 0, 1, 0),
     BackgroundColor3 = T.PURPLE_DARK,
-    BorderSizePixel = 0,
-    Text = "💾 SAVE WALK",
-    TextColor3 = T.WHITE,
-    TextSize = 11,
-    Font = Enum.Font.GothamBold,
-    AutoButtonColor = false,
-    Active = true,
-    ZIndex = 203,
+    BorderSizePixel = 0, Text = "💾 SAVE WALK",
+    TextColor3 = T.WHITE, TextSize = 11,
+    Font = Enum.Font.GothamBold, AutoButtonColor = false,
+    Active = true, ZIndex = 203,
 }, saveClearRow)
 newInst("UICorner", { CornerRadius = UDim.new(0, 8) }, saveWalkBtn)
 applyGradientStroke(saveWalkBtn, 1, 8)
@@ -1100,32 +1025,21 @@ applyGradientStroke(saveWalkBtn, 1, 8)
 local clearWalkBtn = newInst("TextButton", {
     Size = UDim2.new(0.49, 0, 1, 0),
     Position = UDim2.new(0.51, 0, 0, 0),
-    BackgroundColor3 = T.BG_ELEMENT,
-    BorderSizePixel = 0,
-    Text = "🗑 CLEAR",
-    TextColor3 = T.RED,
-    TextSize = 11,
-    Font = Enum.Font.GothamBold,
-    AutoButtonColor = false,
-    Active = true,
-    ZIndex = 203,
+    BackgroundColor3 = T.BG_ELEMENT, BorderSizePixel = 0,
+    Text = "🗑 CLEAR", TextColor3 = T.RED,
+    TextSize = 11, Font = Enum.Font.GothamBold,
+    AutoButtonColor = false, Active = true, ZIndex = 203,
 }, saveClearRow)
 newInst("UICorner", { CornerRadius = UDim.new(0, 8) }, clearWalkBtn)
 applyGradientStroke(clearWalkBtn, 1, 8)
 
 local nameInput = newInst("TextBox", {
     Size = UDim2.new(1, 0, 0, 28),
-    BackgroundColor3 = T.BG_ELEMENT,
-    BorderSizePixel = 0,
-    Text = "",
-    PlaceholderText = "Nama walk...",
-    TextColor3 = T.TEXT,
-    PlaceholderColor3 = T.TEXT_DIM,
-    TextSize = 11,
-    Font = Enum.Font.Gotham,
-    ClearTextOnFocus = false,
-    Visible = false,
-    ZIndex = 203,
+    BackgroundColor3 = T.BG_ELEMENT, BorderSizePixel = 0,
+    Text = "", PlaceholderText = "Nama walk...",
+    TextColor3 = T.TEXT, PlaceholderColor3 = T.TEXT_DIM,
+    TextSize = 11, Font = Enum.Font.Gotham,
+    ClearTextOnFocus = false, Visible = false, ZIndex = 203,
 }, miniBody)
 nameInput.LayoutOrder = 10
 newInst("UICorner", { CornerRadius = UDim.new(0, 6) }, nameInput)
@@ -1133,16 +1047,11 @@ applyGradientStroke(nameInput, 1, 6)
 
 local confirmSaveBtn = newInst("TextButton", {
     Size = UDim2.new(1, 0, 0, 28),
-    BackgroundColor3 = T.PURPLE,
-    BorderSizePixel = 0,
-    Text = "CONFIRM SAVE",
-    TextColor3 = T.WHITE,
-    TextSize = 11,
-    Font = Enum.Font.GothamBold,
-    AutoButtonColor = false,
-    Visible = false,
-    Active = true,
-    ZIndex = 203,
+    BackgroundColor3 = T.PURPLE, BorderSizePixel = 0,
+    Text = "CONFIRM SAVE", TextColor3 = T.WHITE,
+    TextSize = 11, Font = Enum.Font.GothamBold,
+    AutoButtonColor = false, Visible = false,
+    Active = true, ZIndex = 203,
 }, miniBody)
 confirmSaveBtn.LayoutOrder = 11
 newInst("UICorner", { CornerRadius = UDim.new(0, 6) }, confirmSaveBtn)
@@ -1152,12 +1061,9 @@ local countdownLabel = newInst("TextLabel", {
     Size = UDim2.new(1, 0, 1, 0),
     BackgroundColor3 = T.BLACK,
     BackgroundTransparency = 0.5,
-    Text = "",
-    TextColor3 = T.WHITE,
-    TextSize = 80,
-    Font = Enum.Font.GothamBlack,
-    Visible = false,
-    ZIndex = 300,
+    Text = "", TextColor3 = T.WHITE,
+    TextSize = 80, Font = Enum.Font.GothamBlack,
+    Visible = false, ZIndex = 300,
 }, miniUI)
 newInst("UICorner", { CornerRadius = UDim.new(0, 12) }, countdownLabel)
 
@@ -1249,7 +1155,6 @@ end
 
 local lastPos = nil
 local steppedConn = RunService.Stepped:Connect(function()
-    -- ★ SKIP saat recording juga (biar tidak ganggu recording)
     if not STATE.autoRewindEnabled or STATE.playing.active or STATE.recording.active or rewindBusy then
         lastPos = nil; return
     end
@@ -1287,9 +1192,6 @@ arToggle.Activated:Connect(function()
 end)
 updateARToggleVisual()
 
--- ================================================================
--- TRAIL TOGGLE
--- ================================================================
 local function updateTrailToggleVisual()
     if STATE.trailEnabled then
         tween(trailKnob, 0.2, { Position = UDim2.new(1, -21, 0.5, -9) })
@@ -1317,9 +1219,7 @@ local function startRecording()
     STATE.recording.points = {}
     STATE.recording.startTime = tick()
 
-    if STATE.trailEnabled then
-        createTrail()
-    end
+    if STATE.trailEnabled then createTrail() end
 
     STATE.recording.conn = RunService.Heartbeat:Connect(function()
         if not STATE.recording.active then return end
@@ -1353,17 +1253,13 @@ local function stopRecording()
     STATE.recording.active = false
     if STATE.recording.conn then STATE.recording.conn:Disconnect(); STATE.recording.conn = nil end
     STATE.currentRecording = STATE.recording.points
-
     task.spawn(function()
         if STATE.trail then
-            pcall(function()
-                tween(STATE.trail, 1.2, { Transparency = NumberSequence.new(1) })
-            end)
+            pcall(function() tween(STATE.trail, 1.2, { Transparency = NumberSequence.new(1) }) end)
             task.wait(1.3)
         end
         destroyTrail()
     end)
-
     notify("⏹ Recording dihentikan (" .. #STATE.recording.points .. " titik)", T.TEXT)
 end
 
@@ -1383,7 +1279,7 @@ recToggle.Activated:Connect(function()
 end)
 
 -- ================================================================
--- ★★★ PLAYBACK (FIXED v9.6) ★★★
+-- ★★★ PLAYBACK v9.7 — PROXIMITY-BASED (100% FOLLOW PATH) ★★★
 -- ================================================================
 local function setupHumanoid(h)
     if not h then return end
@@ -1421,6 +1317,7 @@ local function playWalk(points, id)
     stopPlayback()
     destroyTrail()
 
+    -- Teleport ke waypoint pertama kalau jauh
     local first = points[1]
     if (root.Position - first.pos).Magnitude > CONFIG.TELEPORT_THRESHOLD then
         root.CFrame = CFrame.new(first.pos + Vector3.new(0, 3, 0)) * CFrame.Angles(0, first.rot, 0)
@@ -1428,97 +1325,117 @@ local function playWalk(points, id)
         hum = getHum(); root = getRoot()
         if not hum or not root then return end
     end
+
     setupHumanoid(hum)
     disableControls()
     STATE.playing.active = true
     STATE.currentPlayingId = id
 
-    local startT = tick()
-    local duration = points[#points].time
-    -- ★ WalkSpeed di-scale, elapsed REAL TIME
-    local speedScale = STATE.autoWalkSpeed / CONFIG.DEFAULT_SPEED
+    -- ★ STATE PROGRESS
+    local currentIdx = 1
+    local lastJumpedIdx = 0
+    local lastProgress = tick()
+    local lastProgressPos = root.Position
+    local lastJump = 0
 
-    log("Playback: duration=" .. string.format("%.2f", duration) .. " speedScale=" .. string.format("%.2f", speedScale))
+    -- ★ Set WalkSpeed = SPEED BOOST (langsung, tidak di-scale)
+    hum.WalkSpeed = STATE.autoWalkSpeed
 
-    local lastJumpTime = 0
-    local jumpedForThisState = false
-    local prevState = "Running"
+    log("Playback start: " .. #points .. " waypoints, WalkSpeed=" .. STATE.autoWalkSpeed)
 
     STATE.playing.conn = RunService.Heartbeat:Connect(function()
         if not STATE.playing.active then return end
         local h = getHum(); local r = getRoot()
         if not h or not r then stopPlayback(); return end
 
-        -- ★ Real time elapsed
-        local elapsed = tick() - startT
-        if elapsed >= duration then
-            stopPlayback(); refreshSavedList()
-            notify("✅ AutoWalk selesai", T.GREEN); return
-        end
-
-        -- Cari waypoint berdasarkan waktu
-        local idx = 1
-        for i = 1, #points do
-            if points[i].time >= elapsed then idx = i; break end
-        end
-
-        -- ★ Auto-resync kalau karakter kepenceng dari waypoint
-        local distToWp = (r.Position - points[idx].pos).Magnitude
-        if distToWp > CONFIG.RESYNC_DISTANCE then
-            local bestIdx = idx
-            local bestDist = distToWp
-            local fromI = math.max(1, idx - CONFIG.RESYNC_RANGE)
-            local toI = math.min(#points, idx + CONFIG.RESYNC_RANGE)
-            for i = fromI, toI do
-                local d = (r.Position - points[i].pos).Magnitude
-                if d < bestDist then
-                    bestDist = d
-                    bestIdx = i
-                end
-            end
-            idx = bestIdx
-        end
-
-        local target = points[math.min(idx + CONFIG.WAYPOINT_LOOKAHEAD, #points)]
-        local current = points[idx]
-
-        -- ★ WalkSpeed = recorded_speed × speedScale
-        local baseSpeed = (current.speed and current.speed > 0) and current.speed or CONFIG.DEFAULT_SPEED
-        local targetSpeed = math.clamp(baseSpeed * speedScale, 4, 500)
+        -- ★ Update WalkSpeed (kalau user ubah slider saat playback)
+        local targetSpeed = STATE.autoWalkSpeed
         if math.abs(h.WalkSpeed - targetSpeed) > 0.5 then
             h.WalkSpeed = targetSpeed
         end
 
-        -- Arah gerak horizontal
+        -- ★ ADVANCE WAYPOINT BY PROXIMITY
+        -- Kalau karakter sudah dekat waypoint berikutnya, maju ke berikutnya
+        local advanced = false
+        while currentIdx < #points do
+            local nextWp = points[currentIdx + 1]
+            local d = (r.Position - nextWp.pos).Magnitude
+            if d < CONFIG.WAYPOINT_REACH_DIST then
+                currentIdx = currentIdx + 1
+                advanced = true
+            else
+                break
+            end
+        end
+
+        -- Update progress timer
+        if advanced or (r.Position - lastProgressPos).Magnitude > 0.5 then
+            lastProgress = tick()
+            lastProgressPos = r.Position
+        end
+
+        -- ★ CEK SELESAI
+        if currentIdx >= #points then
+            local finalDist = (r.Position - points[#points].pos).Magnitude
+            if finalDist < CONFIG.WAYPOINT_REACH_DIST + 1 then
+                stopPlayback()
+                refreshSavedList()
+                notify("✅ AutoWalk selesai (" .. #points .. " waypoints)", T.GREEN)
+                return
+            end
+        end
+
+        -- ★ TARGET = waypoint setelah currentIdx (lookahead)
+        local lookIdx = math.min(currentIdx + CONFIG.LOOKAHEAD, #points)
+        local target = points[lookIdx]
+        local curWp = points[currentIdx]
+
+        -- ★ JUMP HANDLING
+        -- Cek dari currentIdx sampai JUMP_LOOKAHEAD ke depan, ada state Jumping?
+        local shouldJump = false
+        local jumpIdx = nil
+        for i = math.max(currentIdx, lastJumpedIdx + 1), math.min(currentIdx + CONFIG.JUMP_LOOKAHEAD, #points) do
+            local st = normalizeState(points[i].state)
+            if st == "Jumping" then
+                shouldJump = true
+                jumpIdx = i
+                break
+            end
+        end
+
+        -- Y-diff: kalau target lebih tinggi, mungkin perlu lompat
+        local yDiff = target.pos.Y - r.Position.Y
+        if yDiff > CONFIG.Y_JUMP_THRESHOLD then
+            shouldJump = true
+        end
+
+        if shouldJump and (tick() - lastJump) > CONFIG.JUMP_COOLDOWN then
+            local cs = h:GetState()
+            local grounded = (cs == Enum.HumanoidStateType.Running)
+                          or (cs == Enum.HumanoidStateType.Landed)
+                          or (cs == Enum.HumanoidStateType.Idle)
+            if grounded then
+                h.Jump = true
+                lastJump = tick()
+                if jumpIdx then lastJumpedIdx = jumpIdx end
+            end
+        end
+
+        -- ★ MOVE KE TARGET
         local flatCur = Vector3.new(r.Position.X, 0, r.Position.Z)
         local flatTgt = Vector3.new(target.pos.X, 0, target.pos.Z)
         local dir = flatTgt - flatCur
-        if dir.Magnitude > 0.3 then
+        if dir.Magnitude > 0.5 then
             h:Move(dir.Unit, false)
         else
             h:Move(Vector3.zero, false)
         end
         h.AutoRotate = true
 
-        -- Jump
-        local stateStr = normalizeState(current.state)
-        local targetStateStr = normalizeState(target.state)
-        local yDiff = target.pos.Y - r.Position.Y
-        local justJumped = (stateStr == "Jumping" and prevState ~= "Jumping")
-        prevState = stateStr
-        local wantsJump = (targetStateStr == "Jumping" or targetStateStr == "Freefall" or justJumped)
-                           or (yDiff > CONFIG.Y_JUMP_THRESHOLD)
-        if wantsJump and not jumpedForThisState and (tick() - lastJumpTime) > CONFIG.JUMP_COOLDOWN then
-            local curState = h:GetState()
-            local grounded = (curState == Enum.HumanoidStateType.Running)
-                          or (curState == Enum.HumanoidStateType.Landed)
-                          or (curState == Enum.HumanoidStateType.Idle)
-            if grounded then
-                h.Jump = true
-                lastJumpTime = tick()
-                jumpedForThisState = true
-                task.delay(0.6, function() jumpedForThisState = false end)
-            end
+        -- ★ STUCK DETECTION
+        if (tick() - lastProgress) > CONFIG.STUCK_TIMEOUT then
+            stopPlayback()
+            notify("⚠ Playback stuck — dihentikan", T.RED)
         end
     end)
 end
@@ -1555,7 +1472,7 @@ backBtn.Activated:Connect(function()
     local hum = getHum()
     if hum then
         hum.WalkSpeed = 0
-        showCountdown(function() if hum then hum.WalkSpeed = 16 end end)
+        showCountdown(function() if hum then hum.WalkSpeed = STATE.autoWalkSpeed end end)
     else showCountdown(nil) end
 end)
 
@@ -1968,7 +1885,7 @@ ScreenGui.AncestryChanged:Connect(function()
 end)
 
 task.delay(0.6, function()
-    notify("✨ LuxxyHub AutoWalk v9.6 dimuat", T.PURPLE_LIGHT)
+    notify("✨ LuxxyHub AutoWalk v9.7 dimuat", T.PURPLE_LIGHT)
 end)
 
 log("Script loaded successfully")
