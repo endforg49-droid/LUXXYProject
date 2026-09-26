@@ -1,6 +1,7 @@
 --[[
     ╔══════════════════════════════════════════════════════╗
-    ║  LuxxyHub - AutoWalk (v9.5 - Trail Recording)        ║
+    ║  LuxxyHub - AutoWalk (v9.6 - Playback Fix)           ║
+    ║  For Delta Executor                                   ║
     ╚══════════════════════════════════════════════════════╝
 ]]
 
@@ -16,7 +17,7 @@ local SoundService     = game:GetService("SoundService")
 local Debris           = game:GetService("Debris")
 local LocalPlayer      = Players.LocalPlayer
 
-local function log(msg) print("[LuxxyHub v9.5] " .. tostring(msg)) end
+local function log(msg) print("[LuxxyHub v9.6] " .. tostring(msg)) end
 log("Script started")
 
 -- ================================================================
@@ -73,12 +74,15 @@ local CONFIG = {
     JUMP_COOLDOWN   = 0.5,
     Y_JUMP_THRESHOLD = 1.5,
     REWIND_COOLDOWN = 2.0,
+    -- ★ RESYNC
+    RESYNC_DISTANCE = 15,
+    RESYNC_RANGE    = 30,
     BG_IMAGE_ID      = "rbxassetid://125806010780793",
     BG_IMAGE_TRANS   = 0.75,
     BG_IMAGE_COLOR   = Color3.fromRGB(180, 140, 230),
     -- ★ TRAIL CONFIG
-    TRAIL_LIFETIME   = 999,       -- lama trail terlihat (detik). 999 = tampilkan seluruh path
-    TRAIL_THICKNESS  = 0.8,       -- ketebalan garis (studs)
+    TRAIL_LIFETIME   = 999,
+    TRAIL_THICKNESS  = 0.8,
     TRAIL_COLOR_1    = Color3.fromRGB(88, 30, 160),
     TRAIL_COLOR_2    = Color3.fromRGB(255, 255, 255),
     TRAIL_COLOR_3    = Color3.fromRGB(190, 145, 255),
@@ -124,9 +128,9 @@ local STATE = {
     controlsRef = nil,
     autoRewindEnabled = true,
     lastRewindTime = 0,
-    -- ★ trail
     trail = nil,
     trailAttachments = {},
+    trailEnabled = true,
 }
 
 -- ================================================================
@@ -352,7 +356,7 @@ addBgImage(mainFrame, 14)
 applyGradientStroke(mainFrame, 2, 14)
 
 -- ================================================================
--- ★★★ TRAIL SYSTEM ★★★
+-- TRAIL SYSTEM
 -- ================================================================
 local function destroyTrail()
     if STATE.trail then
@@ -361,9 +365,7 @@ local function destroyTrail()
         STATE.trail = nil
     end
     for _, a in ipairs(STATE.trailAttachments) do
-        if a and a.Parent then
-            pcall(function() a:Destroy() end)
-        end
+        if a and a.Parent then pcall(function() a:Destroy() end) end
     end
     STATE.trailAttachments = {}
 end
@@ -379,7 +381,6 @@ local function createTrail()
         Name = "LuxxyTrailA0",
         Position = Vector3.new(0, halfT, 0),
     }, root)
-
     local a1 = newInst("Attachment", {
         Name = "LuxxyTrailA1",
         Position = Vector3.new(0, -halfT, 0),
@@ -411,19 +412,6 @@ local function createTrail()
     STATE.trail = trail
     STATE.trailAttachments = { a0, a1 }
     log("Trail created")
-end
-
--- ★ Helper: disable trail sementara saat teleport (supaya tidak ada garis nyambung)
-local function withTrailDisabled(fn)
-    local wasEnabled = STATE.trail and STATE.trail.Enabled
-    if STATE.trail then STATE.trail.Enabled = false end
-    task.spawn(function()
-        fn()
-        task.wait(0.15)
-        if STATE.trail and wasEnabled then
-            pcall(function() STATE.trail.Enabled = true end)
-        end
-    end)
 end
 
 -- ================================================================
@@ -728,7 +716,7 @@ newInst("TextLabel", {
     Size = UDim2.new(1, -20, 0, 26),
     Position = UDim2.new(0, 10, 0, 10),
     BackgroundTransparency = 1,
-    Text = "LuxxyHub  •  AutoWalk v9.5",
+    Text = "LuxxyHub  •  AutoWalk v9.6",
     TextColor3 = T.WHITE,
     TextSize = 16,
     Font = Enum.Font.GothamBold,
@@ -740,7 +728,7 @@ newInst("TextLabel", {
     Size = UDim2.new(1, -20, 1, -50),
     Position = UDim2.new(0, 10, 0, 42),
     BackgroundTransparency = 1,
-    Text = "📢 INFO v9.5\n\n• ✨ Trail Recording: garis ungu\n  mengikuti pergerakanmu saat RECORD\n• Trail hanya muncul saat recording\n• BG image di UI panel\n• Auto-Rewind teleport protection\n• Checkpoint + Combine\n\nKlik tombol kiri-atas untuk\nbuka/tutup UI.",
+    Text = "📢 INFO v9.6\n\n• ✨ Trail Recording\n• Playback fix (jalan sesuai jalur)\n• Auto-resync saat kepenceng\n• BG image di UI\n• Auto-Rewind teleport protection\n• Checkpoint + Combine\n\nTips: atur AUTO WALK SPEED di tengah\n(20-35) untuk hasil paling akurat.",
     TextColor3 = T.TEXT_DIM,
     TextSize = 12,
     Font = Enum.Font.Gotham,
@@ -1248,7 +1236,6 @@ local function doRewind(reason)
         notify("⚠ Tidak ada riwayat untuk rewind", T.RED)
         rewindBusy = false; return
     end
-    -- ★ Disable trail sementara supaya tidak ada garis nyambung
     if STATE.trail then STATE.trail.Enabled = false end
     root.CFrame = CFrame.new(target.pos + Vector3.new(0, 2, 0)) * CFrame.Angles(0, target.rot, 0)
     pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
@@ -1262,7 +1249,8 @@ end
 
 local lastPos = nil
 local steppedConn = RunService.Stepped:Connect(function()
-    if not STATE.autoRewindEnabled or STATE.playing.active or rewindBusy then
+    -- ★ SKIP saat recording juga (biar tidak ganggu recording)
+    if not STATE.autoRewindEnabled or STATE.playing.active or STATE.recording.active or rewindBusy then
         lastPos = nil; return
     end
     local root = getRoot()
@@ -1300,10 +1288,8 @@ end)
 updateARToggleVisual()
 
 -- ================================================================
--- ★ TRAIL TOGGLE (default ON)
+-- TRAIL TOGGLE
 -- ================================================================
-STATE.trailEnabled = true
-
 local function updateTrailToggleVisual()
     if STATE.trailEnabled then
         tween(trailKnob, 0.2, { Position = UDim2.new(1, -21, 0.5, -9) })
@@ -1323,7 +1309,7 @@ end)
 updateTrailToggleVisual()
 
 -- ================================================================
--- RECORD (★ Trail di-attach saat start, destroy saat stop)
+-- RECORD
 -- ================================================================
 local function startRecording()
     if STATE.recording.active then return end
@@ -1331,7 +1317,6 @@ local function startRecording()
     STATE.recording.points = {}
     STATE.recording.startTime = tick()
 
-    -- ★ Buat trail kalau toggle ON
     if STATE.trailEnabled then
         createTrail()
     end
@@ -1369,7 +1354,6 @@ local function stopRecording()
     if STATE.recording.conn then STATE.recording.conn:Disconnect(); STATE.recording.conn = nil end
     STATE.currentRecording = STATE.recording.points
 
-    -- ★ Hapus trail (fade dulu baru destroy)
     task.spawn(function()
         if STATE.trail then
             pcall(function()
@@ -1399,7 +1383,7 @@ recToggle.Activated:Connect(function()
 end)
 
 -- ================================================================
--- PLAYBACK
+-- ★★★ PLAYBACK (FIXED v9.6) ★★★
 -- ================================================================
 local function setupHumanoid(h)
     if not h then return end
@@ -1423,7 +1407,6 @@ local function stopPlayback()
     local h = getHum()
     if h then h:Move(Vector3.zero, false); h.AutoRotate = true end
     enableControls()
-    -- ★ Tidak ada trail di playback, tapi kalau ada sisa, hapus
     destroyTrail()
 end
 
@@ -1436,7 +1419,6 @@ local function playWalk(points, id)
     if not root or not hum then notify("❌ Humanoid tidak ditemukan", T.RED); return end
 
     stopPlayback()
-    -- ★ Pastikan trail tidak ada saat playback
     destroyTrail()
 
     local first = points[1]
@@ -1453,7 +1435,11 @@ local function playWalk(points, id)
 
     local startT = tick()
     local duration = points[#points].time
+    -- ★ WalkSpeed di-scale, elapsed REAL TIME
     local speedScale = STATE.autoWalkSpeed / CONFIG.DEFAULT_SPEED
+
+    log("Playback: duration=" .. string.format("%.2f", duration) .. " speedScale=" .. string.format("%.2f", speedScale))
+
     local lastJumpTime = 0
     local jumpedForThisState = false
     local prevState = "Running"
@@ -1462,22 +1448,59 @@ local function playWalk(points, id)
         if not STATE.playing.active then return end
         local h = getHum(); local r = getRoot()
         if not h or not r then stopPlayback(); return end
-        local elapsed = (tick() - startT) * speedScale
+
+        -- ★ Real time elapsed
+        local elapsed = tick() - startT
         if elapsed >= duration then
             stopPlayback(); refreshSavedList()
             notify("✅ AutoWalk selesai", T.GREEN); return
         end
+
+        -- Cari waypoint berdasarkan waktu
         local idx = 1
-        for i = 1, #points do if points[i].time >= elapsed then idx = i; break end end
+        for i = 1, #points do
+            if points[i].time >= elapsed then idx = i; break end
+        end
+
+        -- ★ Auto-resync kalau karakter kepenceng dari waypoint
+        local distToWp = (r.Position - points[idx].pos).Magnitude
+        if distToWp > CONFIG.RESYNC_DISTANCE then
+            local bestIdx = idx
+            local bestDist = distToWp
+            local fromI = math.max(1, idx - CONFIG.RESYNC_RANGE)
+            local toI = math.min(#points, idx + CONFIG.RESYNC_RANGE)
+            for i = fromI, toI do
+                local d = (r.Position - points[i].pos).Magnitude
+                if d < bestDist then
+                    bestDist = d
+                    bestIdx = i
+                end
+            end
+            idx = bestIdx
+        end
+
         local target = points[math.min(idx + CONFIG.WAYPOINT_LOOKAHEAD, #points)]
         local current = points[idx]
+
+        -- ★ WalkSpeed = recorded_speed × speedScale
         local baseSpeed = (current.speed and current.speed > 0) and current.speed or CONFIG.DEFAULT_SPEED
-        if math.abs(h.WalkSpeed - baseSpeed) > 0.5 then h.WalkSpeed = baseSpeed end
+        local targetSpeed = math.clamp(baseSpeed * speedScale, 4, 500)
+        if math.abs(h.WalkSpeed - targetSpeed) > 0.5 then
+            h.WalkSpeed = targetSpeed
+        end
+
+        -- Arah gerak horizontal
         local flatCur = Vector3.new(r.Position.X, 0, r.Position.Z)
         local flatTgt = Vector3.new(target.pos.X, 0, target.pos.Z)
         local dir = flatTgt - flatCur
-        if dir.Magnitude > 0.3 then h:Move(dir.Unit, false) else h:Move(Vector3.zero, false) end
+        if dir.Magnitude > 0.3 then
+            h:Move(dir.Unit, false)
+        else
+            h:Move(Vector3.zero, false)
+        end
         h.AutoRotate = true
+
+        -- Jump
         local stateStr = normalizeState(current.state)
         local targetStateStr = normalizeState(target.state)
         local yDiff = target.pos.Y - r.Position.Y
@@ -1523,7 +1546,6 @@ backBtn.Activated:Connect(function()
     if not target then notify("❌ Riwayat belum cukup", T.RED); return end
     local root = getRoot()
     if not root then return end
-    -- ★ Disable trail sementara
     if STATE.trail then STATE.trail.Enabled = false end
     root.CFrame = CFrame.new(target.pos) * CFrame.Angles(0, target.rot, 0)
     notify("⏪ Kembali 2 detik", T.PURPLE_LIGHT)
@@ -1757,7 +1779,6 @@ setCpBtn.Activated:Connect(function()
     STATE.recording.points = {}
     STATE.currentRecording = {}
     statsLabel.Text = "0.0 studs  •  0.00 s  •  0 pts"
-    -- ★ Trail dihapus karena reset recording
     destroyTrail()
     if recToggleState then
         recToggleState = false
@@ -1931,7 +1952,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     STATE.history = {}
     lastPos = nil
     stopPlayback()
-    destroyTrail()   -- ★ pastikan trail bersih saat respawn
+    destroyTrail()
     task.wait(1)
     refreshSavedList()
 end)
@@ -1947,7 +1968,7 @@ ScreenGui.AncestryChanged:Connect(function()
 end)
 
 task.delay(0.6, function()
-    notify("✨ LuxxyHub AutoWalk v9.5 dimuat", T.PURPLE_LIGHT)
+    notify("✨ LuxxyHub AutoWalk v9.6 dimuat", T.PURPLE_LIGHT)
 end)
 
 log("Script loaded successfully")
